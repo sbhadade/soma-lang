@@ -1,0 +1,199 @@
+;;; ═══════════════════════════════════════════════════════════════
+;;; SOMA EXAMPLE PROGRAMS
+;;; Three complete working SOMA programs demonstrating the language
+;;; ═══════════════════════════════════════════════════════════════
+
+;;; ╔══════════════════════════════════════════════════════════════╗
+;;; ║  EXAMPLE 1: hello_agent.soma                                ║
+;;; ║  The simplest SOMA program. Spawns one agent, sends it      ║
+;;; ║  a value, trains a SOM node, receives the result.           ║
+;;; ╚══════════════════════════════════════════════════════════════╝
+
+;;; ── FILE: examples/hello_agent.soma ─────────────────────────
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 4x4
+.AGENTS  2
+.LEARNRATE 0.5
+
+.DATA
+  input_vec : VEC   = <0.8, 0.2, 0.6, 0.4, 0.9, 0.1, 0.7, 0.3>
+  result    : WGHT  = 0.0
+
+.CODE
+
+@_start:
+  SPAWN     A0, @worker_agent    ;;; spawn a worker
+  SOM_MAP   A0, (0,0)            ;;; place it at SOM node (0,0)
+  MOV       R0, [input_vec]      ;;; load input vector
+  MSG_SEND  A0, R0               ;;; send to worker
+  WAIT      A0                   ;;; block for reply
+  MSG_RECV  R1                   ;;; receive trained weight scalar
+  STORE     [result], R1
+  HALT
+
+@worker_agent:
+  MSG_RECV  R0                   ;;; receive input vector
+  SOM_TRAIN R0, S0               ;;; train current SOM node
+  SOM_SENSE R1                   ;;; read post-train activation
+  MSG_SEND  PARENT, R1           ;;; send result back
+  AGENT_KILL SELF
+
+
+;;; ╔══════════════════════════════════════════════════════════════╗
+;;; ║  EXAMPLE 2: swarm_cluster.soma                              ║
+;;; ║  16 agents explore a 16×16 SOM simultaneously, each        ║
+;;; ║  training their local node, then elect a leader.            ║
+;;; ╚══════════════════════════════════════════════════════════════╝
+
+;;; ── FILE: examples/swarm_cluster.soma ───────────────────────
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 16x16
+.AGENTS  256
+.LEARNRATE 0.4
+.EPOCHS  500
+.NBHD    GAUSSIAN
+.IMPORT  "stdlib/soma.stdlib"
+
+.DATA
+  training_data : VEC[64]        ;;; 64 input vectors (pre-loaded)
+  leader_coord  : COORD = (0,0)
+  epoch_count   : INT   = 0
+
+.CODE
+
+@_start:
+  SOM_INIT  RANDOM               ;;; randomize all SOM weights
+  FORK      16, @explorer        ;;; spawn 16 explorer agents
+  BROADCAST 0xBEEF               ;;; signal: begin exploration
+  BARRIER   16                   ;;; wait for all 16 to finish
+  MERGE     ALL, R0              ;;; collect all results
+  SOM_ELECT R0                   ;;; elect the leader node
+  STORE     [leader_coord], R0
+  HALT
+
+@explorer:
+  MSG_RECV  R0                   ;;; wait for start signal
+  MOV       R1, 0x00             ;;; local epoch counter
+
+@explore_loop:
+  MOV       R2, 0x40             ;;; 64 iterations per agent
+  JEQ       R1, R2, @explore_done
+
+  ;;; load next training vector for this agent's partition
+  TRAP      0x20                 ;;; TRAP: get_input_vector → R0
+  SOM_BMU   R0, R3              ;;; find BMU
+  SOM_WALK  SELF, GRADIENT       ;;; move toward BMU
+  SOM_TRAIN R0, S0               ;;; train local node
+  LR_DECAY  0.001                ;;; decay lr
+
+  ADD       R1, R1, 0x01
+  JMP       @explore_loop
+
+@explore_done:
+  SOM_SENSE R4                   ;;; sense final activation
+  ACCUM     R4, R0               ;;; add to merge register
+  MSG_SEND  PARENT, R0           ;;; report result
+  AGENT_KILL SELF
+
+
+;;; ╔══════════════════════════════════════════════════════════════╗
+;;; ║  EXAMPLE 3: online_learner.soma                             ║
+;;; ║  A streaming agent that continuously trains itself on       ║
+;;; ║  live input, adapts SOM topology, and reacts to concept     ║
+;;; ║  drift by resetting neighborhood radius.                    ║
+;;; ╚══════════════════════════════════════════════════════════════╝
+
+;;; ── FILE: examples/online_learner.soma ──────────────────────
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 32x32
+.AGENTS  128
+.LEARNRATE 0.5
+.DECAY   0.0005
+.NBHD    GAUSSIAN
+.IMPORT  "stdlib/soma.stdlib"
+
+.DATA
+  drift_threshold : WGHT = 0.85  ;;; cosine sim below this = drift
+  last_bmu        : COORD = (16,16)
+  drift_count     : INT   = 0
+  stable_count    : INT   = 0
+
+.CODE
+
+@_start:
+  SOM_INIT  PCA                  ;;; PCA init for faster convergence
+  SPAWN_MAP 4,4, @region_agent   ;;; spawn 16 regional agents (4×4 grid)
+  BROADCAST 0x01                 ;;; signal: start streaming
+
+@stream_loop:
+  ;;; receive next live input from OS/sensor stream
+  TRAP      0x30                 ;;; TRAP: read_stream → R0
+  JZ        R0, @stream_done    ;;; EOF/shutdown
+
+  ;;; find best matching unit
+  SOM_BMU   R0, R1
+
+  ;;; compute drift: distance from last BMU
+  SOM_DIST  R1, [last_bmu], R2
+
+  ;;; check for concept drift
+  MOV       R3, [drift_threshold]
+  JGT       R2, R3, @handle_drift
+
+  ;;; normal update
+  SOM_TRAIN R0, S0
+  SOM_NBHD  R1, S1
+  WGHT_UPD  R0, S1
+  LR_DECAY  0.0005
+  STORE     [last_bmu], R1
+
+  MOV       R4, [stable_count]
+  ADD       R4, R4, 0x01
+  STORE     [stable_count], R4
+
+  JMP       @stream_loop
+
+@handle_drift:
+  ;;; concept drift detected — reset neighborhood radius
+  MOV       S0, 0.3             ;;; bump learning rate
+  MOV       S1, 5.0             ;;; expand neighborhood
+
+  MOV       R4, [drift_count]
+  ADD       R4, R4, 0x01
+  STORE     [drift_count], R4
+
+  ;;; notify all regional agents of drift event
+  BROADCAST 0xDDDD
+
+  JMP       @stream_loop
+
+@stream_done:
+  ;;; kill all regional agents
+  AGENT_KILL ALL
+  HALT
+
+@region_agent:
+  ;;; regional agents monitor their SOM quadrant
+  MSG_RECV  R0                   ;;; wait for start
+
+@region_loop:
+  MSG_RECV  R0                   ;;; wait for message
+  MOV       R1, 0xDDDD           ;;; drift signal?
+  JEQ       R0, R1, @region_drift
+
+  ;;; normal: sense local activation and report
+  SOM_SENSE R2
+  ACCUM     R2, R3
+  JMP       @region_loop
+
+@region_drift:
+  ;;; drift: re-initialize this region's weights
+  SOM_INIT  RANDOM
+  MSG_SEND  PARENT, 0xACCC       ;;; ack drift handled
+  JMP       @region_loop

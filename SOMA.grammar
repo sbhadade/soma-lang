@@ -1,0 +1,210 @@
+;;; ═══════════════════════════════════════════════════════════════
+;;; SOMA LANGUAGE GRAMMAR SPECIFICATION v1.0
+;;; Self-Organizing Multi-Agent Binary Language
+;;; Grammar notation: EBNF + SOMA-specific extensions
+;;; ═══════════════════════════════════════════════════════════════
+
+;;; ── TOP LEVEL ────────────────────────────────────────────────
+
+program         ::= header directive* section+
+
+header          ::= '.SOMA'    version
+                    '.ARCH'    arch_target
+                    '.SOMSIZE' grid_dim
+                    '.AGENTS'  integer
+                    newline+
+
+version         ::= integer '.' integer '.' integer
+arch_target     ::= 'ANY' | 'X86' | 'ARM' | 'RISCV' | 'WASM' | 'BARE'
+grid_dim        ::= integer 'x' integer
+
+;;; ── DIRECTIVES ───────────────────────────────────────────────
+
+directive       ::= '.LEARNRATE' float
+                  | '.EPOCHS'    integer
+                  | '.DECAY'     float
+                  | '.NBHD'      nbhd_fn
+                  | '.MSGBUF'    integer
+                  | '.IMPORT'    string
+                  | '.EXPORT'    identifier
+
+nbhd_fn         ::= 'GAUSSIAN' | 'BUBBLE' | 'MEXICAN_HAT' | 'LINEAR'
+
+;;; ── SECTIONS ─────────────────────────────────────────────────
+
+section         ::= data_section
+                  | code_section
+                  | som_section
+                  | agent_section
+
+data_section    ::= '.DATA' newline data_decl*
+code_section    ::= '.CODE' newline statement*
+som_section     ::= '.SOM'  newline som_decl*
+agent_section   ::= '.AGENT' identifier newline statement*
+
+;;; ── DATA DECLARATIONS ────────────────────────────────────────
+
+data_decl       ::= identifier ':' type '=' literal newline
+                  | identifier ':' type '[' integer ']' newline
+
+type            ::= 'VEC'   ;;; 256-bit weight vector
+                  | 'WGHT'  ;;; scalar weight (f32)
+                  | 'COORD' ;;; SOM coordinate pair
+                  | 'MSG'   ;;; message payload (64-bit)
+                  | 'BOOL'  ;;; boolean flag
+                  | 'INT'   ;;; 64-bit integer
+                  | 'BYTE'  ;;; 8-bit byte
+
+;;; ── SOM DECLARATIONS ─────────────────────────────────────────
+
+som_decl        ::= 'NODE' coord ':' vec_literal newline
+                  | 'LINK' coord '->' coord ':' weight newline
+                  | 'REGION' identifier ':' coord '..' coord newline
+
+coord           ::= '(' integer ',' integer ')'
+weight          ::= float | identifier
+
+;;; ── STATEMENTS ───────────────────────────────────────────────
+
+statement       ::= label_def
+                  | instruction newline
+                  | comment
+                  | newline
+
+label_def       ::= '@' identifier ':' newline
+
+instruction     ::= agent_instr
+                  | som_instr
+                  | msg_instr
+                  | flow_instr
+                  | mem_instr
+                  | arith_instr
+
+;;; ── AGENT INSTRUCTIONS ───────────────────────────────────────
+
+agent_instr     ::= 'SPAWN'      reg ',' label
+                  | 'SPAWN_MAP'  grid_dim ',' label
+                  | 'AGENT_KILL' reg_or_self
+                  | 'FORK'       integer ',' label
+                  | 'MERGE'      reg_list ',' reg
+                  | 'BARRIER'    integer
+                  | 'WAIT'       reg
+                  | 'SELF'       reg            ;;; get own agent ID
+                  | 'PARENT'     reg            ;;; get parent agent ID
+                  | 'CHILDREN'   reg            ;;; get child count
+
+reg_or_self     ::= reg | 'SELF' | 'ALL'
+reg_list        ::= reg (',' reg)*
+
+;;; ── SOM INSTRUCTIONS ─────────────────────────────────────────
+
+som_instr       ::= 'SOM_INIT'   init_mode
+                  | 'SOM_BMU'    reg ',' reg       ;;; input, → bmu_coord
+                  | 'SOM_TRAIN'  reg ',' reg        ;;; input, learning_rate
+                  | 'SOM_NBHD'   reg ',' reg        ;;; bmu_coord, → sigma
+                  | 'WGHT_UPD'   reg ',' reg        ;;; input, sigma
+                  | 'LR_DECAY'   float
+                  | 'SOM_WALK'   reg ',' walk_mode
+                  | 'SOM_SENSE'  reg               ;;; read current node → reg
+                  | 'SOM_MAP'    reg ',' coord      ;;; assign agent to coord
+                  | 'SOM_ELECT'  reg               ;;; leader election → reg
+                  | 'SOM_DIST'   reg ',' reg ',' reg ;;; dist(a,b) → reg
+
+init_mode       ::= 'RANDOM' | 'ZEROS' | 'IDENTITY' | 'PCA'
+walk_mode       ::= 'RANDOM' | 'GRADIENT' | 'TARGET' | 'SPIRAL'
+
+;;; ── MESSAGE INSTRUCTIONS ─────────────────────────────────────
+
+msg_instr       ::= 'MSG_SEND'   reg ',' operand   ;;; agent_id, payload
+                  | 'MSG_RECV'   reg               ;;; → payload
+                  | 'MSG_PEEK'   reg               ;;; non-blocking recv
+                  | 'BROADCAST'  operand           ;;; send to ALL agents
+                  | 'MULTICAST'  reg ',' operand   ;;; send to region
+                  | 'MSG_FLUSH'                    ;;; clear message queue
+                  | 'MSG_COUNT'  reg               ;;; queue depth → reg
+
+;;; ── FLOW INSTRUCTIONS ────────────────────────────────────────
+
+flow_instr      ::= 'JMP'   label
+                  | 'JZ'    reg ',' label          ;;; jump if zero
+                  | 'JNZ'   reg ',' label          ;;; jump if non-zero
+                  | 'JEQ'   reg ',' reg ',' label  ;;; jump if equal
+                  | 'JGT'   reg ',' reg ',' label  ;;; jump if greater
+                  | 'CALL'  label
+                  | 'RET'
+                  | 'HALT'
+                  | 'NOP'
+                  | 'TRAP'  integer                ;;; OS syscall
+
+;;; ── MEMORY INSTRUCTIONS ──────────────────────────────────────
+
+mem_instr       ::= 'MOV'   reg ',' operand
+                  | 'LOAD'  reg ',' addr
+                  | 'STORE' addr ',' reg
+                  | 'PUSH'  reg
+                  | 'POP'   reg
+                  | 'ZERO'  reg
+                  | 'COPY'  reg ',' reg
+
+addr            ::= '[' reg ']'
+                  | '[' reg '+' integer ']'
+                  | '[' identifier ']'
+
+;;; ── ARITHMETIC INSTRUCTIONS ──────────────────────────────────
+
+arith_instr     ::= 'ADD'   reg ',' reg ',' reg
+                  | 'SUB'   reg ',' reg ',' reg
+                  | 'MUL'   reg ',' reg ',' reg
+                  | 'DIV'   reg ',' reg ',' reg
+                  | 'DOT'   reg ',' reg ',' reg    ;;; vector dot product
+                  | 'NORM'  reg ',' reg            ;;; normalize vector
+                  | 'DIST'  reg ',' reg ',' reg    ;;; euclidean distance
+                  | 'ACCUM' reg ',' reg            ;;; vector accumulate
+                  | 'SCALE' reg ',' reg ',' float  ;;; scalar multiply
+                  | 'AND'   reg ',' reg ',' reg
+                  | 'OR'    reg ',' reg ',' reg
+                  | 'XOR'   reg ',' reg ',' reg
+                  | 'NOT'   reg ',' reg
+                  | 'SHL'   reg ',' reg ',' integer
+                  | 'SHR'   reg ',' reg ',' integer
+
+;;; ── REGISTERS ────────────────────────────────────────────────
+
+reg             ::= general_reg
+                  | agent_reg
+                  | som_reg
+
+general_reg     ::= 'R' [0-9]+          ;;; R0–R15  (256-bit vectors)
+agent_reg       ::= 'A' [0-9]+          ;;; A0–A63  (agent handles)
+som_reg         ::= 'S' [0-9]+          ;;; S0–S15  (SOM state)
+                                         ;;; S0 = learning rate
+                                         ;;; S1 = neighborhood radius
+                                         ;;; S2 = epoch counter
+                                         ;;; S3 = BMU coord cache
+                                         ;;; S4–S15 = user defined
+
+;;; ── OPERANDS ─────────────────────────────────────────────────
+
+operand         ::= reg
+                  | immediate
+                  | identifier
+
+immediate       ::= integer
+                  | float
+                  | hex_literal
+                  | vec_literal
+                  | 'true' | 'false'
+
+hex_literal     ::= '0x' [0-9A-Fa-f]+
+vec_literal     ::= '<' float (',' float)* '>'
+integer         ::= '-'? [0-9]+
+float           ::= '-'? [0-9]+ '.' [0-9]+
+string          ::= '"' [^"]* '"'
+identifier      ::= [a-zA-Z_][a-zA-Z0-9_]*
+
+;;; ── COMMENTS ─────────────────────────────────────────────────
+
+comment         ::= ';;;' [^\n]* newline
+                  | ';;' [^\n]* newline
+
+newline         ::= '\n' | '\r\n'

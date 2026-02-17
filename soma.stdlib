@@ -1,0 +1,177 @@
+;;; ═══════════════════════════════════════════════════════════════
+;;; SOMA STANDARD LIBRARY — soma.stdlib v1.0
+;;; Core routines every SOMA program can import
+;;; Import with: .IMPORT "stdlib/soma.stdlib"
+;;; ═══════════════════════════════════════════════════════════════
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 8x8
+.AGENTS  16
+.EXPORT  som_train_full
+.EXPORT  som_cluster
+.EXPORT  agent_pool_init
+.EXPORT  agent_pool_get
+.EXPORT  vec_cosine_sim
+.EXPORT  vec_normalize
+.EXPORT  msg_rpc
+.EXPORT  broadcast_sync
+
+.DATA
+
+pool_size    : INT   = 0
+pool_free    : BOOL[64]
+pool_handles : INT[64]
+rpc_result   : MSG
+rpc_done     : BOOL = false
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; SOM ROUTINES
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.CODE
+
+;;; ─────────────────────────────────────────────────
+;;; som_train_full — run a complete SOM training pass
+;;; Args: R0 = input vector, R1 = epoch count
+;;; Modifies: S0 (lr), S1 (sigma), S2 (epoch), S3 (bmu)
+;;; ─────────────────────────────────────────────────
+@som_train_full:
+  STORE   [S2], R1             ;;; save epoch count
+
+@stf_loop:
+  LOAD    R2, [S2]
+  JZ      R2, @stf_done
+
+  ;;; find best matching unit
+  SOM_BMU   R0, R3            ;;; input → BMU coord in R3
+  STORE   [S3], R3             ;;; cache BMU
+
+  ;;; compute neighborhood
+  SOM_NBHD  R3, R4            ;;; BMU coord → sigma in R4
+
+  ;;; update all weights in neighborhood
+  WGHT_UPD  R0, R4            ;;; input, sigma
+
+  ;;; decay learning rate
+  LR_DECAY  0.002
+
+  ;;; decrement epoch
+  SUB     R2, R2, 0x01
+  STORE   [S2], R2
+  JMP     @stf_loop
+
+@stf_done:
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; som_cluster — find cluster ID for input vector
+;;; Args: R0 = input vector
+;;; Returns: R0 = cluster ID (BMU node index)
+;;; ─────────────────────────────────────────────────
+@som_cluster:
+  SOM_BMU   R0, R1            ;;; → BMU coord
+  SOM_SENSE R2                ;;; read activation
+  MOV     R0, R1              ;;; return coord as ID
+  RET
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; AGENT POOL ROUTINES
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+;;; ─────────────────────────────────────────────────
+;;; agent_pool_init — initialize N reusable agents
+;;; Args: R0 = pool size, R1 = @worker_entry
+;;; ─────────────────────────────────────────────────
+@agent_pool_init:
+  STORE   [pool_size], R0
+  ZERO    R2                   ;;; index
+
+@api_loop:
+  JEQ     R2, R0, @api_done
+  SPAWN   A0, R1              ;;; spawn worker
+  STORE   [pool_handles + R2], A0
+  MOV     R3, 0x01
+  STORE   [pool_free + R2], R3 ;;; mark free
+  ADD     R2, R2, 0x01
+  JMP     @api_loop
+
+@api_done:
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; agent_pool_get — grab a free agent from pool
+;;; Returns: A0 = agent handle, R0 = index or -1
+;;; ─────────────────────────────────────────────────
+@agent_pool_get:
+  ZERO    R0
+  MOV     R1, [pool_size]
+
+@apg_scan:
+  JEQ     R0, R1, @apg_none
+  LOAD    R2, [pool_free + R0]
+  JNZ     R2, @apg_found
+  ADD     R0, R0, 0x01
+  JMP     @apg_scan
+
+@apg_found:
+  ZERO    R2
+  STORE   [pool_free + R0], R2 ;;; mark busy
+  LOAD    A0, [pool_handles + R0]
+  RET
+
+@apg_none:
+  MOV     R0, 0xFFFFFFFF      ;;; -1 = no free agent
+  RET
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; VECTOR MATH ROUTINES
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+;;; ─────────────────────────────────────────────────
+;;; vec_cosine_sim — cosine similarity of two vectors
+;;; Args: R0 = vec A, R1 = vec B
+;;; Returns: R0 = similarity (f32 in low 32 bits)
+;;; ─────────────────────────────────────────────────
+@vec_cosine_sim:
+  DOT     R2, R0, R1          ;;; dot product → R2
+  NORM    R3, R0              ;;; |A| → R3
+  NORM    R4, R1              ;;; |B| → R4
+  MUL     R5, R3, R4          ;;; |A|*|B| → R5
+  DIV     R0, R2, R5          ;;; dot/(|A||B|) → R0
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; vec_normalize — normalize vector in-place
+;;; Args: R0 = vector register
+;;; Returns: R0 = normalized vector
+;;; ─────────────────────────────────────────────────
+@vec_normalize:
+  NORM    R1, R0
+  DIV     R0, R0, R1
+  RET
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; MESSAGING ROUTINES
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+;;; ─────────────────────────────────────────────────
+;;; msg_rpc — send message and block for reply
+;;; Args: A0 = target agent, R0 = payload
+;;; Returns: R0 = reply payload
+;;; ─────────────────────────────────────────────────
+@msg_rpc:
+  MOV     R1, 0x00
+  STORE   [rpc_done], R1
+  MSG_SEND  A0, R0            ;;; send request
+  WAIT    A0                  ;;; block for reply
+  MSG_RECV  R0                ;;; read reply
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; broadcast_sync — broadcast and wait for N acks
+;;; Args: R0 = payload, R1 = expected ack count
+;;; ─────────────────────────────────────────────────
+@broadcast_sync:
+  BROADCAST R0
+  BARRIER   R1                ;;; wait for N agents
+  RET
