@@ -1,0 +1,36 @@
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 4x4
+.AGENTS  2
+.LEARNRATE 0.5
+
+.DATA
+  input_vec : VEC   = <0.8, 0.2, 0.6, 0.4, 0.9, 0.1, 0.7, 0.3>
+  result    : WGHT  = 0.0
+
+.CODE
+
+@_start:
+  SPAWN     A0, @worker_agent    ;;; spawn a worker
+  SOM_MAP   A0, (0,0)            ;;; place it at SOM node (0,0)
+  MOV       R0, [input_vec]      ;;; load input vector
+  MSG_SEND  A0, R0               ;;; send to worker
+  WAIT      A0                   ;;; block for reply
+  MSG_RECV  R1                   ;;; receive trained weight scalar
+  STORE     [result], R1
+  HALT
+
+@worker_agent:
+  MSG_RECV  R0                   ;;; receive input vector
+  SOM_TRAIN R0, S0               ;;; train current SOM node
+  SOM_SENSE R1                   ;;; read post-train activation
+  MSG_SEND  PARENT, R1           ;;; send result back
+  AGENT_KILL SELF
+
+
+;;; ╔══════════════════════════════════════════════════════════════╗
+;;; ║  EXAMPLE 2: swarm_cluster.soma                              ║
+;;; ║  16 agents explore a 16×16 SOM simultaneously, each        ║
+;;; ║  training their local node, then elect a leader.            ║
+;;; ╚══════════════════════════════════════════════════════════════╝

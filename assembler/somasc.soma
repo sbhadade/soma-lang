@@ -1,0 +1,909 @@
+;;; ═══════════════════════════════════════════════════════════════
+;;; SOMA ASSEMBLER — somasc v1.0
+;;; The SOMA self-hosting assembler, written in SOMA itself.
+;;; Reads .soma source → emits .sombin binary
+;;;
+;;; This IS the bootstrap: once a host runtime can execute .sombin,
+;;; this file compiles itself. No other language needed.
+;;; ═══════════════════════════════════════════════════════════════
+
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 16x16
+.AGENTS  64
+.LEARNRATE 0.1
+.EPOCHS  0
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; DATA SECTION — assembler state
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.DATA
+
+;;; Input / output buffers
+src_buf     : BYTE[65536]          ;;; raw source text
+bin_buf     : BYTE[131072]         ;;; output binary buffer
+bin_ptr     : INT   = 0            ;;; write cursor
+
+;;; Parsing state
+src_ptr     : INT   = 0            ;;; read cursor
+src_len     : INT   = 0            ;;; source length
+line_no     : INT   = 1            ;;; current line number
+tok_buf     : BYTE[256]            ;;; current token
+tok_len     : INT   = 0
+
+;;; Symbol table (label name → binary offset)
+sym_count   : INT   = 0
+sym_names   : BYTE[256 * 64]       ;;; 256 symbols × 64 chars
+sym_addrs   : INT[256]             ;;; corresponding addresses
+
+;;; Patch table (forward refs to fix up after first pass)
+patch_count : INT   = 0
+patch_locs  : INT[1024]            ;;; binary offsets needing patch
+patch_names : BYTE[1024 * 64]      ;;; label names for each patch
+
+;;; File header template
+hdr_magic   : BYTE[4] = 0x53, 0x4F, 0x4D, 0x41   ;;; "SOMA"
+hdr_ver     : BYTE[4] = 0x00, 0x01, 0x00, 0x00    ;;; v1.0
+
+;;; Error message codes
+ERR_UNKNOWN_OP  : INT = 0x01
+ERR_BAD_REG     : INT = 0x02
+ERR_NO_LABEL    : INT = 0x03
+ERR_SYNTAX      : INT = 0x04
+ERR_OVERFLOW    : INT = 0x05
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; CODE SECTION
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.CODE
+
+@_start:
+  ;;; syscall: read source file into src_buf (TRAP 1 assumes filename in R0, buf in R1, returns len in R0)
+  TRAP    0x01                   
+  STORE   [src_len], R0
+  JZ      R0, @error_empty
+
+  ;;; write .sombin header
+  CALL    @emit_header
+
+  ;;; ── PASS 1: collect labels ──────────────────────
+  ZERO    R0
+  STORE   [src_ptr], R0
+  STORE   [sym_count], R0
+  CALL    @pass_one
+
+  ;;; ── PASS 2: emit binary ─────────────────────────
+  ZERO    R0
+  STORE   [src_ptr], R0
+  STORE   [patch_count], R0
+  CALL    @pass_two
+
+  ;;; resolve forward references (patch table)
+  CALL    @patch_resolve
+
+  ;;; patch header with sizes/offsets
+  CALL    @patch_header
+
+  ;;; flush binary to output file (TRAP 2 assumes buf in R0, len in R1)
+  TRAP    0x02                   
+
+  HALT
+
+;;; ─────────────────────────────────────────────────
+;;; EMIT HEADER
+;;; Writes the 32-byte .sombin file header (placeholders for sizes)
+;;; ─────────────────────────────────────────────────
+@emit_header:
+  ;;; magic "SOMA"
+  MOV     R0, hdr_magic
+  CALL    @emit_bytes  ;;; emit 4 bytes
+  ;;; version 1.0
+  MOV     R0, hdr_ver
+  CALL    @emit_bytes
+  ;;; arch (0=ANY), som rows=16, cols=16, agents=64
+  ZERO    R0
+  CALL    @emit_u8
+  MOV     R0, 16
+  CALL    @emit_u8
+  MOV     R0, 16
+  CALL    @emit_u8
+  MOV     R0, 64
+  CALL    @emit_u8
+  ;;; code offset = 32
+  MOV     R0, 32
+  CALL    @emit_u32
+  ;;; code size (placeholder 0)
+  ZERO    R0
+  CALL    @emit_u32
+  ;;; data offset (placeholder)
+  ZERO    R0
+  CALL    @emit_u32
+  ;;; data size (placeholder)
+  ZERO    R0
+  CALL    @emit_u32
+  ;;; som offset (placeholder)
+  ZERO    R0
+  CALL    @emit_u32
+  ;;; flags (e.g., 0x0003 for SELF_MODIFYING | ONLINE_LEARN)
+  MOV     R0, 0x0003
+  CALL    @emit_u16
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; PATCH HEADER
+;;; After pass 2, update sizes/offsets in header
+;;; ─────────────────────────────────────────────────
+@patch_header:
+  ;;; code size = bin_ptr - 32
+  MOV     R0, [bin_ptr]
+  SUB     R0, R0, 32
+  MOV     R1, 12  ;;; offset in header for code size
+  CALL    @patch_u32
+  ;;; data offset = 32 + code size (assuming data follows code)
+  ADD     R0, R0, 32
+  MOV     R1, 16
+  CALL    @patch_u32
+  ;;; data size = 0 (stub for now, no data emission)
+  ZERO    R0
+  MOV     R1, 20
+  CALL    @patch_u32
+  ;;; som offset = data offset + data size
+  MOV     R0, [bin_ptr]
+  MOV     R1, 24
+  CALL    @patch_u32
+  RET
+
+@patch_u32:
+  ;;; R0 = value, R1 = bin offset
+  MOV     R2, bin_buf
+  ADD     R2, R2, R1
+  STORE   [R2], R0  ;;; assume big-endian store, adjust if needed
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; PASS ONE — label collection
+;;; Scans source, records @label: → sym table with current bin_ptr
+;;; ─────────────────────────────────────────────────
+@pass_one:
+  MOV     R15, [src_len]  ;;; loop limit
+
+@pass_one_loop:
+  CALL    @next_token
+  JZ      R0, @pass_one_done
+
+  ;;; if token starts with '@', it's a label
+  LOAD    R2, [tok_buf]
+  CMP     R2, 64  ;;; '@' ASCII
+  JEQ     R2, @record_label
+
+  ;;; simulate emission to advance bin_ptr (8 bytes per instr)
+  ADD     [bin_ptr], [bin_ptr], 8
+  JMP     @pass_one_loop
+
+@record_label:
+  CALL    @strip_label_delims
+  MOV     R4, [sym_count]
+  CALL    @sym_insert  ;;; insert name from tok_buf, addr from bin_ptr
+  INC     [sym_count]
+  JMP     @pass_one_loop
+
+@pass_one_done:
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; PASS TWO — instruction encoding
+;;; ─────────────────────────────────────────────────
+@pass_two:
+@pass_two_loop:
+  CALL    @next_token
+  JZ      R0, @pass_two_done
+
+  ;;; skip labels (already collected)
+  LOAD    R2, [tok_buf]
+  CMP     R2, 64
+  JEQ     R2, @pass_two_loop
+
+  ;;; skip comments (lines starting with ';')
+  CMP     R2, 59  ;;; ';'
+  JEQ     R2, @skip_line
+
+  ;;; encode instruction
+  CALL    @encode_instr
+  JNZ     R0, @pass_two_loop  ;;; success, continue
+
+  ;;; unknown, error
+  MOV     R0, ERR_UNKNOWN_OP
+  CALL    @emit_error
+  JMP     @pass_two_loop
+
+@skip_line:
+  CALL    @consume_line
+  JMP     @pass_two_loop
+
+@pass_two_done:
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; ENCODE INSTRUCTION
+;;; Hash mnemonic, dispatch to encoder
+;;; ─────────────────────────────────────────────────
+@encode_instr:
+  CALL    @hash_token  ;;; R0 = hash
+  MOV     R1, R0
+
+  ;;; Agent group (opcodes 0x01-0x05)
+  CMP     R1, 0xA1B1  ;;; SPAWN
+  JEQ     @enc_SPAWN
+  CMP     R1, 0xA2B2  ;;; AGENT_KILL
+  JEQ     @enc_AGENT_KILL
+  CMP     R1, 0xA3B3  ;;; FORK
+  JEQ     @enc_FORK
+  CMP     R1, 0xA4B4  ;;; MERGE
+  JEQ     @enc_MERGE
+  CMP     R1, 0xA5B5  ;;; BARRIER
+  JEQ     @enc_BARRIER
+
+  ;;; SOM group (0x11-0x19)
+  CMP     R1, 0xC1D1  ;;; SOM_BMU
+  JEQ     @enc_SOM_BMU
+  CMP     R1, 0xC2D2  ;;; SOM_TRAIN
+  JEQ     @enc_SOM_TRAIN
+  CMP     R1, 0xC3D3  ;;; SOM_NBHD
+  JEQ     @enc_SOM_NBHD
+  CMP     R1, 0xC4D4  ;;; WGHT_UPD
+  JEQ     @enc_WGHT_UPD
+  CMP     R1, 0xC5D5  ;;; SOM_ELECT
+  JEQ     @enc_SOM_ELECT
+
+  ;;; Message group (0x20-0x23)
+  CMP     R1, 0xE1F1  ;;; MSG_SEND
+  JEQ     @enc_MSG_SEND
+  CMP     R1, 0xE2F2  ;;; MSG_RECV
+  JEQ     @enc_MSG_RECV
+  CMP     R1, 0xE3F3  ;;; BROADCAST
+  JEQ     @enc_BROADCAST
+
+  ;;; Flow group (0x30-0x38)
+  CMP     R1, 0xF1A1  ;;; JMP
+  JEQ     @enc_JMP
+  CMP     R1, 0xF2A2  ;;; JZ
+  JEQ     @enc_JZ
+  CMP     R1, 0xF3A3  ;;; JNZ
+  JEQ     @enc_JNZ
+  CMP     R1, 0xF4A4  ;;; JEQ
+  JEQ     @enc_JEQ
+  CMP     R1, 0xF5A5  ;;; JGT
+  JEQ     @enc_JGT
+  CMP     R1, 0xF6A6  ;;; CALL
+  JEQ     @enc_CALL
+  CMP     R1, 0xF7A7  ;;; RET
+  JEQ     @enc_RET
+  CMP     R1, 0xF8A8  ;;; HALT
+  JEQ     @enc_HALT
+  CMP     R1, 0xF9A9  ;;; NOP
+  JEQ     @enc_NOP
+
+  ;;; Arith group (0x50-0x55)
+  CMP     R1, 0xB1C1  ;;; ADD
+  JEQ     @enc_ADD
+  CMP     R1, 0xB2C2  ;;; DOT
+  JEQ     @enc_DOT
+  CMP     R1, 0xB3C3  ;;; NORM
+  JEQ     @enc_NORM
+
+  ZERO    R0  ;;; failure
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; ENCODERS — read operands, build/emit 64-bit word
+;;; Format: opcode(8), agent(8), som_row(8), som_col(8), reg(8), imm(32)
+;;; Adjust fields per instr type (e.g., flow uses imm for addr)
+;;; ─────────────────────────────────────────────────
+@enc_SPAWN:
+  CALL    @read_areg  ;;; R5 = agent
+  CALL    @read_label_ref  ;;; R7 = addr (or patch)
+  MOV     R8, 0x01  ;;; opcode
+  ZERO    R6  ;;; som=0,0
+  ZERO    R9
+  ZERO    R10  ;;; reg=0
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_AGENT_KILL:
+  CALL    @read_areg  ;;; R5
+  MOV     R8, 0x02
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_FORK:
+  CALL    @read_imm  ;;; R7 = count
+  CALL    @read_label_ref  ;;; append to imm
+  MOV     R8, 0x03
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_MERGE:
+  CALL    @read_rreg  ;;; R5 = dst
+  CALL    @read_rreg  ;;; R10 = src (use reg field for second reg)
+  MOV     R8, 0x04
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_BARRIER:
+  CALL    @read_imm  ;;; R7
+  MOV     R8, 0x05
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_SOM_BMU:
+  CALL    @read_rreg  ;;; R5 = input vec
+  CALL    @read_rreg  ;;; R10 = bmu coord out
+  MOV     R8, 0x11
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_SOM_TRAIN:
+  CALL    @read_rreg  ;;; R5 = input
+  CALL    @read_rreg  ;;; R10 = lr
+  MOV     R8, 0x12
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_SOM_NBHD:
+  CALL    @read_rreg  ;;; R5 = bmu
+  CALL    @read_rreg  ;;; R10 = sigma
+  MOV     R8, 0x13
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_WGHT_UPD:
+  CALL    @read_rreg  ;;; R5 = input
+  CALL    @read_rreg  ;;; R10 = sigma
+  MOV     R8, 0x14
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_SOM_ELECT:
+  CALL    @read_rreg  ;;; R5 = out reg
+  MOV     R8, 0x19
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_MSG_SEND:
+  CALL    @read_areg  ;;; R5 = target
+  CALL    @read_operand  ;;; R7 = payload
+  MOV     R8, 0x20
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_MSG_RECV:
+  CALL    @read_rreg  ;;; R5 = payload out
+  MOV     R8, 0x21
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_BROADCAST:
+  CALL    @read_operand  ;;; R7
+  MOV     R8, 0x23
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_JMP:
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x30
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_JZ:
+  CALL    @read_rreg  ;;; R5
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x31
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_JNZ:
+  CALL    @read_rreg  ;;; R5
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x32
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_JEQ:
+  CALL    @read_rreg  ;;; R5
+  CALL    @read_rreg  ;;; R10
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x33
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_JGT:
+  CALL    @read_rreg  ;;; R5
+  CALL    @read_rreg  ;;; R10
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x34
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_CALL:
+  CALL    @read_label_ref  ;;; R7
+  MOV     R8, 0x35
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_RET:
+  MOV     R8, 0x36
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_HALT:
+  MOV     R8, 0x37
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_NOP:
+  MOV     R8, 0x38
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_ADD:
+  CALL    @read_rreg  ;;; R5 = dst
+  CALL    @read_rreg  ;;; R10 = src1
+  CALL    @read_operand  ;;; R7 = src2 (imm or reg in imm field)
+  MOV     R8, 0x50
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_DOT:
+  CALL    @read_rreg  ;;; R5 = dst
+  CALL    @read_rreg  ;;; R10 = vec1
+  CALL    @read_rreg  ;;; pack vec2 in imm or adjust
+  MOV     R8, 0x54
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+@enc_NORM:
+  CALL    @read_rreg  ;;; R5 = dst
+  CALL    @read_rreg  ;;; R10 = vec
+  MOV     R8, 0x55
+  CALL    @build_emit_word
+  MOV     R0, 1
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; HELPERS
+;;; ─────────────────────────────────────────────────
+
+@next_token:
+  ;;; Skip whitespace and comments
+  MOV     R1, [src_ptr]
+  MOV     R2, [src_len]
+@skip_ws:
+  CMP     R1, R2
+  JGE     @tok_eof
+  LOAD    R3, [src_buf + R1]
+  CMP     R3, 32  ;;; space
+  JEQ     @skip_next
+  CMP     R3, 9   ;;; tab
+  JEQ     @skip_next
+  CMP     R3, 10  ;;; \n, inc line
+  JEQ     @inc_line
+  CMP     R3, 13  ;;; \r
+  JEQ     @skip_next
+  CMP     R3, 59  ;;; ; comment, consume line
+  JEQ     @consume_line
+  JMP     @tok_start
+
+@skip_next:
+  INC     R1
+  JMP     @skip_ws
+
+@inc_line:
+  INC     [line_no]
+  INC     R1
+  JMP     @skip_ws
+
+@tok_start:
+  ZERO    [tok_len]
+  MOV     R4, tok_buf
+
+@tok_loop:
+  CMP     R1, R2
+  JGE     @tok_done
+  LOAD    R3, [src_buf + R1]
+  ;;; delimiters: space, tab, \n, \r, ,, (
+  CMP     R3, 32
+  JEQ     @tok_done
+  CMP     R3, 9
+  JEQ     @tok_done
+  CMP     R3, 10
+  JEQ     @tok_done
+  CMP     R3, 13
+  JEQ     @tok_done
+  CMP     R3, 44  ;;; ,
+  JEQ     @tok_done
+  CMP     R3, 40  ;;; (
+  JEQ     @tok_done
+  CMP     R3, 41  ;;; )
+  JEQ     @tok_done
+
+  STORE   [R4], R3
+  INC     [tok_len]
+  INC     R4
+  INC     R1
+  JMP     @tok_loop
+
+@tok_done:
+  STORE   [src_ptr], R1
+  MOV     R0, [tok_len]  ;;; return len >0 success
+  RET
+
+@tok_eof:
+  ZERO    R0
+  RET
+
+@strip_label_delims:
+  ;;; Assume tok_buf starts with @, ends with :
+  MOV     R1, tok_buf + 1  ;;; skip @
+  DEC     [tok_len]  ;;; remove :
+  ;;; Shift bytes left (simple loop)
+  MOV     R2, [tok_len]
+  MOV     R3, tok_buf
+@strip_loop:
+  LOAD    R4, [R1]
+  STORE   [R3], R4
+  INC     R1
+  INC     R3
+  DEC     R2
+  JNZ     R2, @strip_loop
+  RET
+
+@sym_insert:
+  ;;; R4 = index, tok_buf/len = name, bin_ptr = addr
+  MOV     R1, sym_names
+  MUL     R2, R4, 64  ;;; offset = index * 64
+  ADD     R1, R1, R2
+  MOV     R2, tok_buf
+  MOV     R3, [tok_len]
+@sym_copy:
+  LOAD    R5, [R2]
+  STORE   [R1], R5
+  INC     R1
+  INC     R2
+  DEC     R3
+  JNZ     R3, @sym_copy
+  ;;; store addr
+  MOV     R1, sym_addrs
+  MUL     R2, R4, 4  ;;; INT size 4?
+  ADD     R1, R1, R2
+  MOV     R2, [bin_ptr]
+  STORE   [R1], R2
+  RET
+
+@sym_lookup:
+  ;;; tok_buf/len = name, return addr in R0 or 0 if not found
+  ZERO    R0
+  ZERO    R4  ;;; index
+  MOV     R6, [sym_count]
+@lookup_loop:
+  CMP     R4, R6
+  JGE     @lookup_done
+  MOV     R1, sym_names
+  MUL     R2, R4, 64
+  ADD     R1, R1, R2
+  MOV     R2, tok_buf
+  MOV     R3, [tok_len]
+@cmp_name:
+  LOAD    R5, [R1]
+  LOAD    R7, [R2]
+  CMP     R5, R7
+  JNE     @next_sym
+  INC     R1
+  INC     R2
+  DEC     R3
+  JNZ     R3, @cmp_name
+  ;;; match, get addr
+  MOV     R1, sym_addrs
+  MUL     R2, R4, 4
+  ADD     R1, R1, R2
+  LOAD    R0, [R1]
+  RET
+@next_sym:
+  INC     R4
+  JMP     @lookup_loop
+@lookup_done:
+  RET
+
+@patch_resolve:
+  ZERO    R4  ;;; index
+  MOV     R6, [patch_count]
+@patch_loop:
+  CMP     R4, R6
+  JGE     @patch_done
+  ;;; copy name to tok_buf for lookup
+  MOV     R1, patch_names
+  MUL     R2, R4, 64
+  ADD     R1, R1, R2
+  MOV     R2, tok_buf
+  MOV     R3, 64  ;;; max
+@copy_patch_name:
+  LOAD    R5, [R1]
+  STORE   [R2], R5
+  JZ      R5, @copy_done  ;;; null-term
+  INC     R1
+  INC     R2
+  DEC     R3
+  JNZ     R3, @copy_patch_name
+@copy_done:
+  SUB     R3, 64, R3
+  STORE   [tok_len], R3
+  CALL    @sym_lookup
+  JZ      R0, @error_no_label
+  ;;; patch at loc
+  MOV     R1, [patch_locs + R4 * 4]
+  MOV     R2, bin_buf
+  ADD     R2, R2, R1
+  STORE   [R2], R0  ;;; assume 32-bit imm patch
+  INC     R4
+  JMP     @patch_loop
+@patch_done:
+  RET
+
+@add_patch:
+  ;;; Add current bin_ptr to patch_locs, name to patch_names
+  MOV     R4, [patch_count]
+  MOV     R1, patch_locs
+  MUL     R2, R4, 4
+  ADD     R1, R1, R2
+  MOV     R2, [bin_ptr]
+  STORE   [R1], R2
+  MOV     R1, patch_names
+  MUL     R2, R4, 64
+  ADD     R1, R1, R2
+  MOV     R2, tok_buf
+  MOV     R3, [tok_len]
+@add_patch_copy:
+  LOAD    R5, [R2]
+  STORE   [R1], R5
+  INC     R1
+  INC     R2
+  DEC     R3
+  JNZ     R3, @add_patch_copy
+  INC     [patch_count]
+  RET
+
+@hash_token:
+  ;;; Simple hash for mnemonic (e.g., djb2 style)
+  MOV     R0, 5381  ;;; seed
+  MOV     R1, tok_buf
+  MOV     R2, [tok_len]
+@hash_loop:
+  LOAD    R3, [R1]
+  MUL     R0, R0, 33
+  ADD     R0, R0, R3
+  INC     R1
+  DEC     R2
+  JNZ     R2, @hash_loop
+  RET
+
+@read_areg:
+  CALL    @next_token
+  ;;; expect A0-A63
+  LOAD    R2, [tok_buf]
+  CMP     R2, 65  ;;; 'A'
+  JNE     @bad_reg
+  ;;; parse number
+  CALL    @parse_int  ;;; R0 = num
+  CMP     R0, 63
+  JGT     @bad_reg
+  MOV     R5, R0
+  RET
+@bad_reg:
+  MOV     R0, ERR_BAD_REG
+  CALL    @emit_error
+  HALT
+
+@read_rreg:
+  CALL    @next_token
+  ;;; expect R0-R15
+  LOAD    R2, [tok_buf]
+  CMP     R2, 82  ;;; 'R'
+  JNE     @bad_reg
+  CALL    @parse_int
+  CMP     R0, 15
+  JGT     @bad_reg
+  MOV     R5, R0  ;;; or R10 for second reg
+  RET
+
+@read_imm:
+  CALL    @next_token
+  CALL    @parse_int  ;;; R0 = value
+  MOV     R7, R0
+  RET
+
+@read_label_ref:
+  CALL    @next_token
+  LOAD    R2, [tok_buf]
+  CMP     R2, 64  ;;; '@'
+  JNE     @err_syntax
+  CALL    @strip_label_delims  ;;; name in tok_buf
+  CALL    @sym_lookup
+  JNZ     R0, @set_imm
+  ;;; forward ref, add patch (emit 0 placeholder)
+  CALL    @add_patch
+  ZERO    R0
+@set_imm:
+  MOV     R7, R0
+  RET
+
+@read_operand:
+  CALL    @next_token
+  LOAD    R2, [tok_buf]
+  CMP     R2, 82  ;;; 'R' -> reg
+  JEQ     @op_reg
+  CMP     R2, 65  ;;; 'A' -> areg
+  JEQ     @op_areg
+  ;;; else imm or label
+  CALL    @parse_int
+  JNZ     R0, @op_imm
+  CALL    @read_label_ref
+  MOV     R7, R0
+  RET
+@op_reg:
+  CALL    @parse_int
+  MOV     R10, R0  ;;; pack in reg field?
+  RET
+@op_areg:
+  CALL    @parse_int
+  MOV     R5, R0
+  RET
+@op_imm:
+  MOV     R7, R0
+  RET
+
+@parse_int:
+  ;;; tok_buf -> int in R0 (simple decimal)
+  ZERO    R0
+  MOV     R1, tok_buf + 1  ;;; skip prefix if any
+  MOV     R2, [tok_len]
+  DEC     R2
+@parse_loop:
+  LOAD    R3, [R1]
+  SUB     R3, R3, 48  ;;; '0'
+  CMP     R3, 9
+  JGT     @err_syntax
+  MUL     R0, R0, 10
+  ADD     R0, R0, R3
+  INC     R1
+  DEC     R2
+  JNZ     R2, @parse_loop
+  RET
+
+@build_emit_word:
+  ;;; Build 64-bit: opcode(8)|agent(8)|som_row(8)|som_col(8)|reg(8)|imm(32)
+  ;;; R8=op, R5=agent, R6=row, R9=col, R10=reg, R7=imm
+  ;;; (adjust for specific instr, e.g., som fields 0 if not used)
+  SHL     R0, R8, 56
+  SHL     R1, R5, 48
+  OR      R0, R0, R1
+  SHL     R1, R6, 40
+  OR      R0, R0, R1
+  SHL     R1, R9, 32
+  OR      R0, R0, R1
+  SHL     R1, R10, 24
+  OR      R0, R0, R1
+  OR      R0, R0, R7  ;;; imm 32-bit
+  CALL    @emit_u64
+  ADD     [bin_ptr], [bin_ptr], 8
+  RET
+
+@emit_u64:
+  ;;; R0 = value, append to bin_buf at bin_ptr (big-endian)
+  MOV     R1, bin_buf
+  ADD     R1, R1, [bin_ptr]
+  STORE   [R1 + 0], R0 >> 56 & 0xFF
+  STORE   [R1 + 1], R0 >> 48 & 0xFF
+  STORE   [R1 + 2], R0 >> 40 & 0xFF
+  STORE   [R1 + 3], R0 >> 32 & 0xFF
+  STORE   [R1 + 4], R0 >> 24 & 0xFF
+  STORE   [R1 + 5], R0 >> 16 & 0xFF
+  STORE   [R1 + 6], R0 >> 8 & 0xFF
+  STORE   [R1 + 7], R0 & 0xFF
+  RET
+
+@emit_u32:
+  ;;; R0 = value
+  MOV     R1, bin_buf
+  ADD     R1, R1, [bin_ptr]
+  STORE   [R1 + 0], R0 >> 24 & 0xFF
+  STORE   [R1 + 1], R0 >> 16 & 0xFF
+  STORE   [R1 + 2], R0 >> 8 & 0xFF
+  STORE   [R1 + 3], R0 & 0xFF
+  ADD     [bin_ptr], [bin_ptr], 4
+  RET
+
+@emit_u16:
+  STORE   [R1 + 0], R0 >> 8 & 0xFF
+  STORE   [R1 + 1], R0 & 0xFF
+  ADD     [bin_ptr], [bin_ptr], 2
+  RET
+
+@emit_u8:
+  STORE   [R1 + 0], R0 & 0xFF
+  INC     [bin_ptr]
+  RET
+
+@emit_bytes:
+  ;;; R0 = ptr to bytes, assume 4 bytes for header
+  MOV     R1, bin_buf
+  ADD     R1, R1, [bin_ptr]
+  LOAD    R2, [R0 + 0]
+  STORE   [R1 + 0], R2
+  LOAD    R2, [R0 + 1]
+  STORE   [R1 + 1], R2
+  LOAD    R2, [R0 + 2]
+  STORE   [R1 + 2], R2
+  LOAD    R2, [R0 + 3]
+  STORE   [R1 + 3], R2
+  ADD     [bin_ptr], [bin_ptr], 4
+  RET
+
+@consume_line:
+  MOV     R1, [src_ptr]
+  MOV     R2, [src_len]
+@consume_loop:
+  CMP     R1, R2
+  JGE     @consume_done
+  LOAD    R3, [src_buf + R1]
+  CMP     R3, 10
+  JEQ     @inc_line_consume
+  CMP     R3, 13
+  JEQ     @consume_done
+  INC     R1
+  JMP     @consume_loop
+@inc_line_consume:
+  INC     [line_no]
+@consume_done:
+  INC     R1  ;;; skip \n
+  STORE   [src_ptr], R1
+  RET
+
+@emit_error:
+  ;;; R0 = code, TRAP 0xFF for error (assume host prints)
+  TRAP    0xFF
+  HALT
+
+@error_empty:
+  MOV     R0, ERR_SYNTAX
+  CALL    @emit_error
+
+@error_no_label:
+  MOV     R0, ERR_NO_LABEL
+  CALL    @emit_error
+
+@err_syntax:
+  MOV     R0, ERR_SYNTAX
+  CALL    @emit_error
