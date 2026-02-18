@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+soma — SOMA Language CLI
+Commands: compile  run  disasm  info  build  emit-c  native  bench
+"""
+
+import sys, os, subprocess, struct, time, shutil
+
+HERE    = os.path.dirname(os.path.abspath(__file__))
+ASM_PY  = os.path.join(HERE, 'bootstrap', 'bootstrap_assembler.py')
+RUN_PY  = os.path.join(HERE, 'runtime',   'soma_runtime.py')
+EMIT_C  = os.path.join(HERE, 'runtime',   'soma_emit_c.py')
+BIN_DIR = os.path.join(HERE, 'bin')
+
+HEADER_SIZE = 32
+MEM_FLAG    = 0x80000000
+
+OPNAME = {
+    0x01:'SPAWN',    0x02:'AGENT_KILL',0x03:'FORK',    0x04:'MERGE',
+    0x05:'BARRIER',  0x06:'SPAWN_MAP', 0x07:'WAIT',
+    0x11:'SOM_BMU',  0x12:'SOM_TRAIN', 0x13:'SOM_NBHD',0x14:'WGHT_UPD',
+    0x19:'SOM_ELECT',0x1A:'SOM_MAP',   0x1B:'SOM_SENSE',0x1C:'SOM_INIT',
+    0x1D:'SOM_WALK', 0x1E:'SOM_DIST',  0x1F:'LR_DECAY',
+    0x20:'MSG_SEND', 0x21:'MSG_RECV',  0x23:'BROADCAST',0x24:'ACCUM',
+    0x30:'JMP',      0x31:'JZ',        0x32:'JNZ',     0x33:'JEQ',
+    0x34:'JGT',      0x35:'CALL',      0x36:'RET',     0x37:'HALT',
+    0x38:'NOP',      0x40:'MOV',       0x41:'STORE',   0x42:'LOAD',
+    0x43:'TRAP',     0x50:'ADD',       0x51:'SUB',     0x52:'MUL',
+    0x53:'DIV',      0x54:'DOT',       0x55:'NORM',
+}
+
+def die(m):  print(f"soma: {m}", file=sys.stderr); sys.exit(1)
+def need(p): 
+    if not os.path.exists(p): die(f"file not found: {p}")
+
+def out_path(src, ext):
+    os.makedirs(BIN_DIR, exist_ok=True)
+    base = os.path.splitext(os.path.basename(src))[0]
+    return os.path.join(BIN_DIR, base + ext)
+
+def compile_soma(src, out=None, quiet=False):
+    need(src)
+    out = out or out_path(src, '.sombin')
+    r = subprocess.run([sys.executable, ASM_PY, src, out], capture_output=True)
+    if r.returncode: 
+        if quiet: print(r.stderr.decode(), file=sys.stderr)
+        sys.exit(r.returncode)
+    if not quiet: print(r.stdout.decode(), end='')
+    return out
+
+def read_sombin(path):
+    need(path)
+    d = open(path, 'rb').read()
+    if d[:4] != b'SOMA': die(f"not a .sombin: {path}")
+    return d
+
+def parse_hdr(d):
+    return dict(
+        ver   = struct.unpack_from('>I',d,4)[0],
+        rows  = d[9] or 16, cols=d[10] or 16, agents=d[11] or 64,
+        co    = struct.unpack_from('>I',d,12)[0],
+        cs    = struct.unpack_from('>I',d,16)[0],
+        do_   = struct.unpack_from('>I',d,20)[0],
+        ds    = struct.unpack_from('>I',d,24)[0],
+    )
+
+def as_sombin(path, quiet=False):
+    if path.endswith('.soma'): return compile_soma(path, quiet=quiet)
+    return path
+
+# ── commands ──────────────────────────────────────────────────────────────
+
+def cmd_compile(args):
+    if not args: die("usage: soma compile <file.soma> [out.sombin]")
+    compile_soma(args[0], args[1] if len(args)>1 else None)
+
+def cmd_run(args):
+    if not args: die("usage: soma run <file.soma|.sombin> [--quiet]")
+    quiet = '--quiet' in args
+    path  = as_sombin(args[0], quiet=True)
+    r = subprocess.run([sys.executable, RUN_PY, path] + (['--quiet'] if quiet else []))
+    sys.exit(r.returncode)
+
+def cmd_disasm(args):
+    if not args: die("usage: soma disasm <file.sombin>")
+    path = as_sombin(args[0], quiet=True)
+    d = read_sombin(path); h = parse_hdr(d)
+    code = d[h['co']: h['co']+h['cs']]
+    rem  = len(code)%8
+    if rem: code += bytes(8-rem)
+
+    print(f"\n  {path}")
+    print(f"  SOM {h['rows']}×{h['cols']}  agents={h['agents']}  "
+          f"{len(code)//8} instructions  {h['ds']} data bytes\n")
+    print(f"  {'Addr':8}  {'Mnemonic':12}  ag   src  dst  imm")
+    print(f"  {'─'*8}  {'─'*12}  {'─'*3}  {'─'*3}  {'─'*3}  {'─'*10}")
+    for i in range(0, len(code)-7, 8):
+        raw = struct.unpack_from('>Q', code, i)[0]
+        op  = (raw>>56)&0xFF; ag=(raw>>48)&0xFF
+        src = (raw>>40)&0xFF; dst=(raw>>32)&0xFF; imm=raw&0xFFFFFFFF
+        nm  = OPNAME.get(op, f'0x{op:02x}')
+        mem = ' ◀MEM' if imm&MEM_FLAG else ''
+        print(f"  0x{HEADER_SIZE+i:06x}  {nm:12s}  {ag:3d}  {src:3d}  {dst:3d}  "
+              f"0x{imm&~MEM_FLAG:08x}{mem}")
+
+def cmd_info(args):
+    if not args: die("usage: soma info <file.sombin>")
+    path = as_sombin(args[0], quiet=True)
+    d = read_sombin(path); h = parse_hdr(d)
+    print(f"\n  File    : {path}  ({len(d)} bytes)")
+    print(f"  Version : 0x{h['ver']:08x}")
+    print(f"  SOM     : {h['rows']}×{h['cols']}  max_agents={h['agents']}")
+    print(f"  Code    : {h['cs']} bytes  ({h['cs']//8} instructions)  @ 0x{h['co']:x}")
+    print(f"  Data    : {h['ds']} bytes  @ 0x{h['do_']:x}\n")
+
+def cmd_build(args):
+    r = subprocess.run(['bash', os.path.join(HERE,'build.sh')])
+    sys.exit(r.returncode)
+
+def cmd_emit_c(args):
+    if not args: die("usage: soma emit-c <file.soma|.sombin>")
+    if not os.path.exists(EMIT_C): die("soma_emit_c.py not found in runtime/")
+    path = as_sombin(args[0], quiet=True)
+    r = subprocess.run([sys.executable, EMIT_C, path])
+    sys.exit(r.returncode)
+
+def cmd_native(args):
+    if not args: die("usage: soma native <file.soma|.sombin> [output]")
+    if not os.path.exists(EMIT_C): die("soma_emit_c.py not found in runtime/")
+    if not shutil.which('gcc'): die("gcc not found — install gcc")
+
+    path   = as_sombin(args[0], quiet=True)
+    outbin = args[1] if len(args)>1 else out_path(path, '')
+    c_file = outbin + '.c'
+
+    print(f"  Emitting C → {c_file}")
+    with open(c_file,'w') as f:
+        r = subprocess.run([sys.executable, EMIT_C, path], stdout=f)
+        if r.returncode: die("C emission failed")
+
+    gcc = ['gcc', '-O3', '-march=native', '-ffast-math',
+           '-o', outbin, c_file, '-lm', '-lpthread']
+    print(f"  gcc -O3 → {outbin}")
+    r = subprocess.run(gcc)
+    if r.returncode: die("gcc failed")
+    print(f"  ✅ {outbin}")
+    return outbin
+
+def cmd_bench(args):
+    if not args: die("usage: soma bench <file.soma|.sombin>")
+    path = as_sombin(args[0], quiet=True)
+    RUNS = 5
+
+    print(f"\n  {'─'*52}")
+    print(f"  SOMA Benchmark — {os.path.basename(path)}")
+    print(f"  {'─'*52}")
+
+    py_times = []
+    for _ in range(RUNS):
+        t = time.perf_counter()
+        subprocess.run([sys.executable, RUN_PY, path, '--quiet'], capture_output=True)
+        py_times.append(time.perf_counter()-t)
+    py_avg = sum(py_times)/RUNS
+    print(f"  Python interpreter  {py_avg*1000:8.2f} ms  ({RUNS} runs avg)")
+
+    outbin = out_path(path, '')
+    if not os.path.exists(outbin):
+        print(f"  Building native binary...")
+        cmd_native([path])
+
+    if os.path.exists(outbin):
+        c_times = []
+        for _ in range(RUNS):
+            t = time.perf_counter()
+            subprocess.run([outbin], capture_output=True)
+            c_times.append(time.perf_counter()-t)
+        c_avg  = sum(c_times)/RUNS
+        speedup = py_avg/c_avg if c_avg>1e-9 else 9999
+        print(f"  C native (gcc -O3)  {c_avg*1000:8.2f} ms  ({RUNS} runs avg)")
+        print(f"  {'─'*52}")
+        print(f"  Speedup             {speedup:8.1f}×  faster")
+        if speedup >= 10:
+            print(f"  🚀 SOMA native is {speedup:.0f}× faster than Python!")
+    print(f"  {'─'*52}\n")
+
+# ── dispatch ──────────────────────────────────────────────────────────────
+
+CMDS = {
+    'compile': cmd_compile, 'run': cmd_run,    'disasm': cmd_disasm,
+    'info':    cmd_info,    'build': cmd_build, 'emit-c': cmd_emit_c,
+    'native':  cmd_native,  'bench': cmd_bench,
+}
+
+HELP = """\
+soma — SOMA Language CLI v2.0
+
+  soma compile  <file.soma>              Assemble → .sombin
+  soma run      <file.soma|.sombin>      Execute
+  soma disasm   <file.sombin|.soma>      Disassemble
+  soma info     <file.sombin|.soma>      Header info
+  soma build                             Run build.sh pipeline
+  soma emit-c   <file.soma|.sombin>      Emit C source
+  soma native   <file.soma|.sombin>      Compile native binary (gcc -O3)
+  soma bench    <file.soma|.sombin>      Python vs native benchmark
+"""
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h','--help','help'):
+        print(HELP); sys.exit(0)
+    cmd = sys.argv[1]; rest = sys.argv[2:]
+    if cmd not in CMDS: die(f"unknown command '{cmd}'")
+    CMDS[cmd](rest)
