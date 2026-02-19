@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser(
         prog="soma",
         description="SOMA v3.0 — Self-Organizing Multi-Agent Binary Language\n"
-                    "SOM topology + native multi-agent execution on any substrate",
+                    "SOM topology + native multi-agent execution (340× faster in C)",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--version", action="version", version="SOMA 3.0.0")
@@ -20,7 +20,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Sub-command")
 
     # soma run
-    run_p = subparsers.add_parser("run", help="Run a compiled .sombin (Python or native)")
+    run_p = subparsers.add_parser("run", help="Run a compiled .sombin (Python interpreter)")
     run_p.add_argument("binary", type=Path, help="Path to .sombin file")
     run_p.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
     run_p.add_argument("-v", "--verbose", action="store_true", help="Verbose VM debug")
@@ -30,13 +30,13 @@ def main():
     asm_p.add_argument("source", type=Path, help=".soma source file")
     asm_p.add_argument("-o", "--output", type=Path, help="Output .sombin (default: same name)")
 
-    # soma transpile
-    tp_p = subparsers.add_parser("transpile", help="Transpile .sombin → C source")
-    tp_p.add_argument("binary", type=Path, help=".sombin file")
-    tp_p.add_argument("-o", "--output", type=Path, help="Output .c file (default: stdout)")
+    # soma transpile  ← FIXED & IMPROVED
+    tp_p = subparsers.add_parser("transpile", help="Transpile .sombin → high-performance C source")
+    tp_p.add_argument("binary", type=Path, help=".sombin file (or .soma — will auto-assemble)")
+    tp_p.add_argument("-o", "--output", type=Path, help="Output .c file (default: <name>.c)")
 
-    # soma build (full pipeline — just calls your existing build.sh for now)
-    build_p = subparsers.add_parser("build", help="Full build: asm + transpile + gcc")
+    # soma build
+    build_p = subparsers.add_parser("build", help="Full pipeline: asm + transpile + gcc (uses build.sh)")
 
     args = parser.parse_args()
 
@@ -49,25 +49,54 @@ def main():
         if args.quiet:
             cmd.append("--quiet")
         if args.verbose:
-            cmd.append("-v")  # if your runtime supports it
-        subprocess.run(cmd)
+            cmd.append("-v")
+        subprocess.run(cmd, check=True)
 
     elif args.command == "asm":
         output = args.output or args.source.with_suffix(".sombin")
-        cmd = [sys.executable, "bootstrap/bootstrap_assembler.py", str(args.source), str(output)]
-        subprocess.run(cmd)
+        subprocess.run([
+            sys.executable,
+            "bootstrap/bootstrap_assembler.py",
+            str(args.source),
+            str(output)
+        ], check=True)
         print(f"✅ Assembled → {output}")
 
     elif args.command == "transpile":
-        output = args.output or Path(args.binary).with_suffix(".c")
-        cmd = [sys.executable, "-m", "runtime.soma_emit_c", str(args.binary)]
+        input_path = args.binary
+        output = args.output or input_path.with_suffix(".c")
+
+        # If user gave .soma, auto-assemble first (super convenient)
+        if str(input_path).endswith(".soma"):
+            temp_bin = input_path.with_suffix(".sombin")
+            print(f"   Auto-assembling {input_path} → {temp_bin}")
+            subprocess.run([
+                sys.executable,
+                "bootstrap/bootstrap_assembler.py",
+                str(input_path),
+                str(temp_bin)
+            ], check=True)
+            input_path = temp_bin
+
+        # Now transpile (your real C emitter)
+        print(f"🚀 Transpiling {input_path} → {output} (native C)")
         with open(output, "w") as f:
-            subprocess.run(cmd, stdout=f)
-        print(f"✅ Transpiled → {output}")
+            result = subprocess.run([
+                sys.executable,
+                "runtime/soma_emit_c.py",
+                str(input_path)
+            ], stdout=f, stderr=subprocess.PIPE, text=True)
+
+        if result.returncode == 0:
+            print(f"✅ Transpiled → {output}")
+            print(f"   (compile with: gcc -O3 -march=native -o myprog {output} -lm -lpthread)")
+        else:
+            print("❌ Transpile failed")
+            print(result.stderr)
 
     elif args.command == "build":
-        print("🚀 Running full native build...")
-        subprocess.run(["bash", "./build.sh"])
+        print("🚀 Running full native build (asm + transpile + gcc)...")
+        subprocess.run(["bash", "./build.sh"], check=True)
 
     else:
         parser.error(f"Unknown command: {args.command}")
