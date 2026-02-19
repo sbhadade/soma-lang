@@ -1,3 +1,9 @@
+<div align="center">
+<img src="soma-logo.svg" alt="SOMA Language" width="800"/>
+<br/>
+
+
+
 # SOMA 🧠 Implementation
 
 > Full working implementation of the SOMA Self-Organizing Multi-Agent Binary Language
