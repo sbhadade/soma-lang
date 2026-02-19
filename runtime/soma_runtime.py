@@ -410,3 +410,24 @@ if __name__=='__main__':
     try: SomaRuntime(args[0],verbose).run()
     except KeyboardInterrupt: print("\n[SOMA] Interrupted.")
     except Exception: import traceback; traceback.print_exc(); sys.exit(1)
+
+    
+
+# ── CLI entrypoint for `pip install` ─────────────────────────────────────
+def run_cli():
+    import sys
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print("Usage: soma <binary.sombin> [--quiet]")
+        print("       (full CLI coming in v3.1)")
+        sys.exit(0)
+
+    binary_path = sys.argv[1]
+    quiet = "--quiet" in sys.argv[2:]
+
+    # Call your existing interpreter (just paste your current top-level code here
+    # or extract it into a run_file(binary_path, quiet) function)
+    print(f"🚀 SOMA v3.0 running {binary_path} (quiet={quiet})")
+    # ... your runtime code ...
+
+if __name__ == "__main__":
+    run_cli()
