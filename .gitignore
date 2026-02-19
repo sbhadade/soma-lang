@@ -1,4 +1,34 @@
-*.sombin
+# Compiled binaries
+bin/*.sombin
+bin/*.c
+bin/hello_agent
+bin/swarm_cluster
+bin/online_learner
+bin/somasc
+bin/somasc.sombin
+
+# Keep spec and gitkeep
+!bin/.gitkeep
+!bin/SOMBIN.spec
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# OS
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Editor
+.vscode/
+.idea/
+*.iml
