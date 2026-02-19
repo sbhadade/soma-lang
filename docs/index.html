@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>SOMA Playground 🧠</title>
+<style>
+:root{--bg:#0a0e1a;--panel:#111827;--border:#1e2d45;--accent:#00d4ff;--accent2:#7c3aed;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--text:#e2e8f0;--muted:#64748b;--code-bg:#0d1117;--mono:'JetBrains Mono','Fira Code',monospace}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:linear-gradient(135deg,#0a0e1a,#0f1729);border-bottom:1px solid var(--border);padding:.6rem 1.5rem;display:flex;align-items:center;gap:1rem}
+.logo{font-size:1.4rem;font-weight:800;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.tagline{color:var(--muted);font-size:.78rem;border-left:1px solid var(--border);padding-left:1rem}
+.hl{margin-left:auto;display:flex;gap:.5rem;align-items:center}
+.badge{background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.3);color:var(--accent);padding:.15rem .5rem;border-radius:999px;font-size:.68rem;font-weight:600}
+.main{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto;overflow:hidden}
+.toolbar{grid-column:1/-1;background:var(--panel);border-bottom:1px solid var(--border);padding:.45rem 1rem;display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+button{cursor:pointer;border:none;border-radius:6px;padding:.35rem .8rem;font-size:.8rem;font-weight:600;transition:all .15s;display:inline-flex;align-items:center;gap:.3rem}
+.btn-run{background:linear-gradient(135deg,var(--accent),#0099cc);color:#000;box-shadow:0 0 16px rgba(0,212,255,.3)}
+.btn-run:hover{transform:translateY(-1px)}
+.btn-sec{background:rgba(255,255,255,.05);color:var(--text);border:1px solid var(--border)}
+.btn-sec:hover{background:rgba(255,255,255,.1);border-color:var(--accent)}
+select{background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:.3rem .6rem;border-radius:6px;font-size:.8rem;cursor:pointer;outline:none}
+.sep{width:1px;height:18px;background:var(--border)}
+.lbl{font-size:.7rem;color:var(--muted);font-weight:600;text-transform:uppercase}
+.ep{background:var(--code-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.op{background:var(--panel);display:flex;flex-direction:column;overflow:hidden}
+.ph{padding:.4rem .9rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.4rem;background:rgba(255,255,255,.02);font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase}
+.dot{width:7px;height:7px;border-radius:50%}.dr{background:#ff5f56}.dy{background:#ffbd2e}.dg{background:#27c93f}
+textarea{flex:1;background:transparent;border:none;outline:none;color:#e2e8f0;font-family:var(--mono);font-size:.82rem;line-height:1.65;padding:1rem;resize:none;tab-size:2}
+.tabs{display:flex;border-bottom:1px solid var(--border);background:rgba(0,0,0,.2)}
+.tab{padding:.45rem .9rem;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.tab.a{color:var(--accent);border-bottom-color:var(--accent)}
+.tab:hover:not(.a){color:var(--text)}
+.tc{display:none;flex:1;overflow:auto;padding:1rem;font-family:var(--mono);font-size:.8rem;line-height:1.7}
+.tc.a{display:block}
+.sb{grid-column:1/-1;background:var(--panel);border-top:1px solid var(--border);padding:.25rem 1rem;display:flex;gap:1.5rem;align-items:center;font-size:.72rem;color:var(--muted)}
+.ok{color:var(--green)}.err{color:var(--red)}
+.vm-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.8rem}
+.vc{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.5rem .7rem}
+.vl{font-size:.68rem;color:var(--muted)}.vv{font-size:1rem;font-weight:700;color:var(--accent)}
+.ar{display:flex;align-items:center;gap:.5rem;padding:.25rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:.78rem}
+.aid{color:var(--accent);font-weight:700;width:2.5rem}
+.dead{color:var(--muted)}.running{color:var(--green)}.blocked{color:var(--amber)}
+.som-grid{display:inline-grid;gap:2px}.som-cell{width:16px;height:16px;border-radius:2px}
+.exd{position:relative}
+.exm{display:none;position:absolute;top:100%;left:0;background:var(--panel);border:1px solid var(--border);border-radius:8px;min-width:210px;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,.5);margin-top:3px}
+.exm.open{display:block}
+.exi{padding:.5rem .9rem;cursor:pointer;font-size:.8rem;border-bottom:1px solid rgba(255,255,255,.04)}
+.exi:hover{background:rgba(0,212,255,.1);color:var(--accent)}
+.exi .d{font-size:.7rem;color:var(--muted);margin-top:.1rem}
+</style></head><body>
+<header>
+  <div class="logo">SOMA 🧠</div>
+  <div class="tagline">Self-Organizing Multi-Agent Binary Language — Browser Playground</div>
+  <div class="hl">
+    <span class="badge">v1.0.0</span><span class="badge">Pure JS · No Server</span>
+    <a href="https://github.com/sbhadade/soma-lang" target="_blank" style="text-decoration:none"><button class="btn-sec" style="font-size:.7rem">GitHub ↗</button></a>
+  </div>
+</header>
+<div class="main">
+<div class="toolbar">
+  <button class="btn-run" onclick="runAll()">⚡ Assemble &amp; Run</button>
+  <button class="btn-sec" onclick="runAsm()">🔧 Assemble</button>
+  <button class="btn-sec" onclick="showDisasm()">≡ Disasm</button>
+  <div class="sep"></div>
+  <div class="exd" id="exd">
+    <button class="btn-sec" onclick="toggleEx()">📁 Examples ▾</button>
+    <div class="exm" id="exm">
+      <div class="exi" onclick="loadEx('hello')">Hello Agent<div class="d">Spawn + message passing</div></div>
+      <div class="exi" onclick="loadEx('swarm')">Swarm Clustering<div class="d">FORK explorers on SOM</div></div>
+      <div class="exi" onclick="loadEx('arith')">Arithmetic<div class="d">MOV/ADD/SUB/CMP/JMP</div></div>
+      <div class="exi" onclick="loadEx('election')">Leader Election<div class="d">SOM_ELECT demo</div></div>
+    </div>
+  </div>
+  <div class="sep"></div>
+  <span class="lbl">Max steps:</span>
+  <select id="maxS"><option value="1000">1 K</option><option value="10000" selected>10 K</option><option value="100000">100 K</option></select>
+  <div class="sep"></div>
+  <button class="btn-sec" onclick="clearOut()">🗑 Clear</button>
+  <span style="margin-left:auto;font-size:.7rem;color:var(--muted)">Ctrl+Enter to run</span>
+</div>
+<div class="ep">
+  <div class="ph"><div class="dot dr"></div><div class="dot dy"></div><div class="dot dg"></div>&nbsp; editor.soma</div>
+  <textarea id="ed" spellcheck="false" autocomplete="off"></textarea>
+</div>
+<div class="op">
+  <div class="tabs">
+    <div class="tab a" onclick="swTab('run')">▶ Run</div>
+    <div class="tab" onclick="swTab('bin')">⬡ Binary</div>
+    <div class="tab" onclick="swTab('dis')">≡ Disasm</div>
+    <div class="tab" onclick="swTab('vm')">🤖 VM State</div>
+    <div class="tab" onclick="swTab('som')">🗺 SOM Map</div>
+  </div>
+  <div id="tc-run" class="tc a"><pre id="outRun" style="color:#8b949e">// Press Ctrl+Enter or click "Assemble &amp; Run" to execute a SOMA program.</pre></div>
+  <div id="tc-bin" class="tc"><pre id="outBin" style="color:#58a6ff">// Assemble to see .sombin bytes</pre></div>
+  <div id="tc-dis" class="tc"><pre id="outDis" style="color:#79c0ff">// Assemble to see disassembly</pre></div>
+  <div id="tc-vm" class="tc"><div id="outVM">// VM state after run</div></div>
+  <div id="tc-som" class="tc"><div id="outSOM">// SOM map after run</div></div>
+</div>
+<div class="sb">
+  <span id="stMain">🟢 Ready</span>
+  <span id="stBin">Binary: —</span>
+  <span id="stAg">Agents: —</span>
+  <span id="stSom">SOM: —</span>
+  <span id="stSt">Steps: —</span>
+  <span style="margin-left:auto;color:var(--muted);font-size:.68rem">SOMA v1.0 · ISA v1.0 · MIT License</span>
+</div>
+</div>
+<script>
+const OPC={SPAWN:1,AGENT_KILL:2,FORK:3,MERGE:4,BARRIER:5,SOM_BMU:17,SOM_TRAIN:18,SOM_NBHD:19,WGHT_UPD:20,SOM_INIT:21,SOM_WALK:22,SOM_MAP:23,SOM_ELECT:25,MSG_SEND:32,MSG_RECV:33,BROADCAST:35,JMP:48,JZ:49,JNZ:50,CALL:51,RET:52,WAIT:53,NOP:54,HALT:55,ADD:64,SUB:65,MUL:66,DIV:67,MOV:80,LOAD:81,STORE:82,DOT:84,NORM:85,CMP:86};
+const ON=Object.fromEntries(Object.entries(OPC).map(([k,v])=>[v,k]));
+const MN=new Set(Object.keys(OPC));
+const RG=new Set(['SELF','PARENT','ALL',...[...Array(16)].map((_,i)=>`R${i}`),...[...Array(64)].map((_,i)=>`A${i}`),...[...Array(16)].map((_,i)=>`S${i}`)]);
+function eReg(n){if(n==='SELF')return 0xFF00;if(n==='PARENT')return 0xFF01;if(n==='ALL')return 0xFF02;if(/^R(\d+)$/.test(n)){const v=+n.slice(1);if(v<16)return v;}if(/^A(\d+)$/.test(n)){const v=+n.slice(1);if(v<64)return 0x100|v;}if(/^S(\d+)$/.test(n)){const v=+n.slice(1);if(v<16)return 0x200|v;}throw new Error('Bad reg: '+n);}
+function dReg(c){if(c===0xFF00)return'SELF';if(c===0xFF01)return'PARENT';if(c===0xFF02)return'ALL';const hi=(c>>8)&0xFF,lo=c&0xFF;if(hi===0)return`R${lo}`;if(hi===1)return`A${lo}`;if(hi===2)return`S${lo}`;return`#${c.toString(16).padStart(4,'0')}`;}
+function lex(src){const T=[];let i=0;const skip=()=>{while(i<src.length&&' \t\r'.includes(src[i]))i++;};while(i<src.length){skip();if(i>=src.length)break;const c=src[i];if(c==='\n'){T.push({t:'NL'});i++;continue;}if(c===';'){while(i<src.length&&src[i]!=='\n')i++;continue;}if(c==='['){T.push({t:'LB'});i++;continue;}if(c===']'){T.push({t:'RB'});i++;continue;}if(c===','){T.push({t:'CM'});i++;continue;}if(c===':'){T.push({t:'CL'});i++;continue;}if(c==='='){T.push({t:'EQ',v:'='});i++;continue;}if(c==='('){let j=i+1;while(j<src.length&&src[j]!==')')j++;const p=src.slice(i+1,j).split(',');T.push({t:'CO',v:[+p[0],+p[1]]});i=j+1;continue;}if(c==='"'){let j=i+1;while(j<src.length&&src[j]!=='"')j++;T.push({t:'STR',v:src.slice(i+1,j)});i=j+1;continue;}if(c==='@'){let j=i+1;while(j<src.length&&/\w/.test(src[j]))j++;const nm=src.slice(i,j);i=j;skip();if(src[i]===':'){T.push({t:'LD',v:nm});i++;}else T.push({t:'LR',v:nm});continue;}if(c==='.'){let j=i;while(j<src.length&&/[A-Za-z_]/.test(src[j]))j++;const w=src.slice(i,j).toUpperCase();i=j;T.push({t:['.SOMA','.ARCH','.SOMSIZE','.AGENTS','.CODE','.DATA','.SELF_MODIFYING','.FLAGS'].includes(w)?'DIR':'ID',v:w});continue;}if(/\d/.test(c)||((c==='-'||c==='+')&&/\d/.test(src[i+1]))){let j=i;if(c==='-'||c==='+')j++;if(src.slice(j,j+2)==='0x'||src.slice(j,j+2)==='0X'){j+=2;while(j<src.length&&/[0-9a-fA-F]/.test(src[j]))j++;T.push({t:'INT',v:parseInt(src.slice(i,j),16)});i=j;continue;}if(src.slice(j,j+2)==='0b'||src.slice(j,j+2)==='0B'){j+=2;while(j<src.length&&/[01]/.test(src[j]))j++;T.push({t:'INT',v:parseInt(src.slice(i+2,j),2)});i=j;continue;}while(j<src.length&&(/\d/.test(src[j])||src[j]==='.'))j++;const raw=src.slice(i,j);i=j;if(/^\d+\.\d+\.\d+$/.test(raw)){T.push({t:'ID',v:raw});continue;}if(raw.includes('.')){T.push({t:'FLT',v:parseFloat(raw)});continue;}T.push({t:'INT',v:parseInt(raw,10)});continue;}if(/[A-Za-z_]/.test(c)){let j=i;while(j<src.length&&/\w/.test(src[j]))j++;const w=src.slice(i,j);i=j;const u=w.toUpperCase();if(MN.has(u))T.push({t:'MN',v:u});else if(RG.has(u))T.push({t:'RG',v:u});else T.push({t:'ID',v:w});continue;}i++;}T.push({t:'EOF'});return T;}
+function assemble(src){const tokens=lex(src);let p=0;const skipNL=()=>{while(tokens[p]?.t==='NL')p++;};const nodes=[];const hdr={arch:0,rows:4,cols:4,agents:16,flags:0};while(p<tokens.length){skipNL();const t=tokens[p];if(!t||t.t==='EOF')break;p++;if(t.t==='DIR'){const args=[];while(tokens[p]&&tokens[p].t!=='NL'&&tokens[p].t!=='EOF')args.push(tokens[p++]);const v0=args[0],v1=args[1];if(t.v==='.ARCH'&&v0){const m={'ANY':0,'X86':1,'ARM64':2,'ARM':2,'RISCV':3,'WASM':4};hdr.arch=m[String(v0.v).toUpperCase()]??0;}else if(t.v==='.SOMSIZE'&&v0){const raw=String(v0.v);if(raw.toLowerCase().includes('x')){const p2=raw.toLowerCase().split('x');hdr.rows=+p2[0];hdr.cols=+p2[1];}else if(v1){hdr.rows=+raw;hdr.cols=+String(v1.v).replace(/^x/i,'');}}else if(t.v==='.AGENTS'&&v0)hdr.agents=+v0.v||16;else if(t.v==='.SELF_MODIFYING')hdr.flags|=1;}else if(t.t==='LD')nodes.push({k:'L',n:t.v});else if(t.t==='MN'){const ops=[];while(tokens[p]&&tokens[p].t!=='NL'&&tokens[p].t!=='EOF'){const op=tokens[p++];if(op.t==='CM')continue;if(op.t==='LB'){const inn=tokens[p++];tokens[p++];ops.push({t:'MEM',v:inn.v});}else ops.push(op);}nodes.push({k:'I',m:t.v,ops});}else if(t.t==='ID'&&tokens[p]?.t==='CL'){p++;const dt=tokens[p++];if(tokens[p]?.t==='EQ')p++;const val=tokens[p++];nodes.push({k:'D',n:t.v,dt:dt?.v,val:val?.v??0});}}
+const labels={};let pc=0;for(const n of nodes){if(n.k==='L')labels[n.n]=pc;else if(n.k==='I')pc+=8;}
+function res(op){if(!op)return 0;if(op.t==='INT'||op.t==='FLT')return op.v;if(op.t==='RG'){try{return eReg(op.v);}catch{return 0;}}if(op.t==='LR'){const nm=op.v.replace('@','');return labels[nm]??labels[op.v]??0;}if(op.t==='ID'){if(op.v==='RANDOM')return 0xFFFF;if(op.v==='GRADIENT')return 0xFFFE;if(op.v==='SELF')return 0xFF00;if(op.v==='PARENT')return 0xFF01;if(op.v==='ALL')return 0xFF02;const n=parseInt(op.v,0);return isNaN(n)?0:n;}if(typeof op.v==='number')return op.v;return 0;}
+const words=[];for(const n of nodes){if(n.k!=='I')continue;const opc=OPC[n.m];if(opc===undefined)continue;const O=OPC,ops=n.ops;let aid=0,sx=0,sy=0,reg=0,imm=0;if(opc===O.HALT||opc===O.NOP||opc===O.RET){}else if(opc===O.SPAWN){reg=res(ops[0])&0xFFFF;imm=res(ops[1])&0xFFFF;}else if(opc===O.SOM_MAP){reg=res(ops[0])&0xFFFF;if(ops[1]?.t==='CO'){sx=ops[1].v[0]&0xFF;sy=ops[1].v[1]&0xFF;}}else if(opc===O.MSG_SEND){reg=res(ops[0])&0xFFFF;imm=res(ops[1])&0xFFFF;}else if(opc===O.MSG_RECV){reg=res(ops[0])&0xFFFF;}else if(opc===O.SOM_TRAIN){reg=res(ops[0])&0xFFFF;imm=res(ops[1])&0xFFFF;}else if(opc===O.SOM_INIT||opc===O.BROADCAST){imm=res(ops[0])&0xFFFF;}else if(opc===O.SOM_WALK){reg=res(ops[0])&0xFFFF;imm=res(ops[1])&0xFFFF;}else if(opc===O.SOM_ELECT){reg=res(ops[0])&0xFFFF;}else if(opc===O.FORK||opc===O.BARRIER||opc===O.MERGE){aid=res(ops[0])&0xFF;if(ops[1])imm=res(ops[1])&0xFFFF;}else if(opc===O.WAIT||opc===O.AGENT_KILL){reg=res(ops[0])&0xFFFF;}else if(opc===O.JMP||opc===O.CALL){imm=res(ops[0])&0xFFFF;}else if(opc===O.JZ||opc===O.JNZ){reg=res(ops[0])&0xFFFF;if(ops[1])imm=res(ops[1])&0xFFFF;}else if([O.ADD,O.SUB,O.MUL,O.MOV,O.DOT,O.NORM,O.CMP,O.LOAD,O.STORE].includes(opc)){if(ops[0])reg=res(ops[0])&0xFFFF;if(ops[1])imm=res(ops[1])&0xFFFF;}words.push({opc,aid,sx,sy,reg,imm});}
+const dataBuf=nodes.filter(n=>n.k==='D').map(n=>typeof n.val==='number'?n.val:0);
+const HS=32,DS=dataBuf.length*8,CO=HS+DS,CS=words.length*8;const ab=new ArrayBuffer(HS+DS+CS);const dv=new DataView(ab);const u8=new Uint8Array(ab);
+u8[0]=0x53;u8[1]=0x4F;u8[2]=0x4D;u8[3]=0x41;dv.setUint16(4,1,false);dv.setUint16(6,0,false);u8[8]=hdr.arch;u8[9]=hdr.rows;u8[10]=hdr.cols;u8[11]=Math.min(hdr.agents,255);dv.setUint32(12,CO,false);dv.setUint32(16,CS,false);dv.setUint32(20,HS,false);dv.setUint32(24,DS,false);dv.setUint16(28,(CO+CS)&0xFFFF,false);dv.setUint16(30,hdr.flags,false);
+for(let i=0;i<dataBuf.length;i++)dv.setFloat64(HS+i*8,dataBuf[i],false);
+for(let i=0;i<words.length;i++){const{opc,aid,sx,sy,reg,imm}=words[i];const hi=BigInt(opc)<<56n|BigInt(aid)<<48n|BigInt(sx)<<40n|BigInt(sy)<<32n;const lo=BigInt(reg)<<16n|BigInt(imm);dv.setBigUint64(CO+i*8,hi|lo,false);}
+return{buf:ab,hdr,codeOffset:CO,codeSize:CS,dataOffset:HS,dataSize:DS};}
+class SomMap{constructor(rows,cols,dims=16){this.rows=rows;this.cols=cols;this.dims=dims;this.nodes=Array.from({length:rows},(_,r)=>Array.from({length:cols},(_,c)=>({r,c,w:Array.from({length:dims},()=>Math.random())})));}bmu(vec){let best=Infinity,br=0,bc=0;for(let r=0;r<this.rows;r++)for(let c=0;c<this.cols;c++){const d=this.nodes[r][c].w.reduce((s,w,i)=>s+(w-(vec[i]||0))**2,0);if(d<best){best=d;br=r;bc=c;}}return[br,bc];}train(vec,br,bc,lr=.1,sig=1){for(let r=0;r<this.rows;r++)for(let c=0;c<this.cols;c++){const inf=Math.exp(-((r-br)**2+(c-bc)**2)/(2*sig*sig));this.nodes[r][c].w=this.nodes[r][c].w.map((w,i)=>w+lr*inf*((vec[i]||0)-w));}}}
+class VM{constructor(result,maxSteps=10000){const{buf,hdr,codeOffset,codeSize,dataOffset}=result;this.buf=buf;this.dv=new DataView(buf);this.hdr=hdr;this.CO=codeOffset;this.CS=codeSize;this.DO=dataOffset;this.maxSteps=maxSteps;this.som=new SomMap(hdr.rows,hdr.cols);this.agents={};this.nextId=0;this.steps=0;this._spawn(0,null);}
+_spawn(pc,parent){const id=this.nextId++;this.agents[id]={id,parent,pc,state:'running',R:new Array(16).fill(0),A:new Array(64).fill(0),S:[.1,1,0,...new Array(13).fill(0)],sx:0,sy:0,inbox:[],zero:false,R15:0};return id;}
+_getR(ag,code){if(code===0xFF00)return ag.id;if(code===0xFF01)return ag.parent??0;if(code===0xFF02)return 0;const hi=(code>>8)&0xFF,lo=code&0xFF;if(hi===0)return ag.R[lo]??0;if(hi===1)return ag.A[lo]??0;if(hi===2)return Math.round(ag.S[lo]??0);return 0;}
+_setR(ag,code,v){const hi=(code>>8)&0xFF,lo=code&0xFF;if(hi===0&&lo<16)ag.R[lo]=v;else if(hi===1&&lo<64)ag.A[lo]=v;else if(hi===2&&lo<16)ag.S[lo]=v;}
+_read(ag){const off=this.CO+ag.pc;if(off+8>this.buf.byteLength)return null;const w=this.dv.getBigUint64(off,false);return{opc:Number((w>>56n)&0xFFn),aid:Number((w>>48n)&0xFFn),sx:Number((w>>40n)&0xFFn),sy:Number((w>>32n)&0xFFn),reg:Number((w>>16n)&0xFFFFn),imm:Number(w&0xFFFFn)};}
+run(){const O=OPC;while(this.steps<this.maxSteps){const run=Object.values(this.agents).filter(a=>a.state==='running');if(!run.length){const bl=Object.values(this.agents).filter(a=>a.state==='blocked');for(const ag of bl)if(ag.inbox.length)ag.state='running';if(!Object.values(this.agents).some(a=>a.state==='running'))break;continue;}let halted=false;for(const ag of run){if(ag.state!=='running')continue;const ins=this._read(ag);if(!ins){ag.state='dead';continue;}ag.pc+=8;this.steps++;const{opc,aid,sx,sy,reg,imm}=ins;
+if(opc===O.HALT){ag.state='dead';Object.values(this.agents).forEach(a=>a.state='dead');halted=true;break;}
+else if(opc===O.NOP){}
+else if(opc===O.SPAWN){const cid=this._spawn(imm,ag.id);this._setR(ag,reg,cid);}
+else if(opc===O.AGENT_KILL){const tid=this._getR(ag,reg);if(reg===0xFF00||tid===ag.id)ag.state='dead';else if(this.agents[tid])this.agents[tid].state='dead';}
+else if(opc===O.FORK){const n=aid||1;for(let i=0;i<n;i++)this._spawn(imm,ag.id);}
+else if(opc===O.WAIT){const tid=this._getR(ag,reg);if(this.agents[tid]&&this.agents[tid].state!=='dead')ag.pc-=8;}
+else if(opc===O.SOM_INIT){for(let r=0;r<this.som.rows;r++)for(let c=0;c<this.som.cols;c++)this.som.nodes[r][c].w=Array.from({length:this.som.dims},()=>Math.random());}
+else if(opc===O.SOM_MAP){ag.sx=sx;ag.sy=sy;}
+else if(opc===O.SOM_BMU){const[br,bc]=this.som.bmu(ag.R.slice(0,this.som.dims));ag.sx=br;ag.sy=bc;this._setR(ag,reg,br*this.som.cols+bc);}
+else if(opc===O.SOM_TRAIN){const vec=ag.R.slice(0,this.som.dims);const[br,bc]=this.som.bmu(vec);this.som.train(vec,br,bc,ag.S[0],ag.S[1]);ag.S[2]++;}
+else if(opc===O.SOM_WALK){const dr=Math.round(Math.random()*2)-1,dc=Math.round(Math.random()*2)-1;ag.sx=Math.max(0,Math.min(this.som.rows-1,ag.sx+dr));ag.sy=Math.max(0,Math.min(this.som.cols-1,ag.sy+dc));}
+else if(opc===O.SOM_ELECT){const ids=Object.keys(this.agents).filter(id=>this.agents[id].state!=='dead').map(Number);this._setR(ag,reg,ids.length?Math.min(...ids):0);}
+else if(opc===O.MSG_SEND){const tid=this._getR(ag,reg);if(reg===0xFF02)Object.values(this.agents).forEach(a=>{if(a.id!==ag.id&&a.state!=='dead')a.inbox.push(imm);});else if(reg===0xFF01&&ag.parent!==null&&this.agents[ag.parent])this.agents[ag.parent].inbox.push(imm);else if(this.agents[tid])this.agents[tid].inbox.push(imm);}
+else if(opc===O.BROADCAST){Object.values(this.agents).forEach(a=>{if(a.id!==ag.id&&a.state!=='dead')a.inbox.push(imm);});}
+else if(opc===O.MSG_RECV){if(ag.inbox.length){this._setR(ag,reg,ag.inbox.shift());}else{ag.state='blocked';ag.pc-=8;}}
+else if(opc===O.JMP)ag.pc=imm;
+else if(opc===O.JZ){if(this._getR(ag,reg)===0)ag.pc=imm;}
+else if(opc===O.JNZ){if(this._getR(ag,reg)!==0)ag.pc=imm;}
+else if(opc===O.CALL){ag.R15=ag.pc;ag.pc=imm;}
+else if(opc===O.RET)ag.pc=ag.R15;
+else if(opc===O.ADD)this._setR(ag,reg,this._getR(ag,reg)+imm);
+else if(opc===O.SUB)this._setR(ag,reg,this._getR(ag,reg)-imm);
+else if(opc===O.MUL)this._setR(ag,reg,this._getR(ag,reg)*imm);
+else if(opc===O.MOV)this._setR(ag,reg,imm);
+else if(opc===O.CMP)ag.zero=(this._getR(ag,reg)===imm);
+else if(opc===O.LOAD){const off=this.DO+imm*8;if(off+8<=this.buf.byteLength)this._setR(ag,reg,Number(this.dv.getBigUint64(off,false)));}
+}if(halted)break;}return this.steps;}}
+function disassemble(result){const{buf,hdr,codeOffset,codeSize}=result;const dv=new DataView(buf);const arch=['ANY','X86','ARM64','ARM','RISCV','WASM'][hdr.arch]||'?';const lines=[`; SOMA 1.0  arch=${arch}`,`; SOM ${hdr.rows}x${hdr.cols}  agents=${hdr.agents}  flags=0x${hdr.flags.toString(16).padStart(4,'0')}`,'',`.SOMA    1.0.0`,`.ARCH    ${arch}`,`.SOMSIZE ${hdr.rows}x${hdr.cols}`,`.AGENTS  ${hdr.agents}`,'','.CODE'];let pc=0;for(let off=codeOffset;off<codeOffset+codeSize;off+=8){if(off+8>buf.byteLength)break;const w=dv.getBigUint64(off,false);const opc=Number((w>>56n)&0xFFn),aid=Number((w>>48n)&0xFFn),sx=Number((w>>40n)&0xFFn),sy=Number((w>>32n)&0xFFn),reg=Number((w>>16n)&0xFFFFn),imm=Number(w&0xFFFFn);const mn=ON[opc]||`UNK(${opc.toString(16)})`,rn=dReg(reg);lines.push(`  ${pc.toString(16).padStart(4,'0')}:  ${w.toString(16).padStart(16,'0').toUpperCase()}  ${mn.padEnd(12)} ${rn}, #0x${imm.toString(16).padStart(4,'0')}  ; agent=${aid} som=(${sx},${sy})`);pc+=8;}return lines.join('\n');}
+function hexDump(result){const u8=new Uint8Array(result.buf);const{codeOffset,dataOffset}=result;const lines=[];for(let i=0;i<u8.length;i+=16){const off=i.toString(16).padStart(8,'0');const bytes=[];for(let j=i;j<Math.min(i+16,u8.length);j++){const cls=j<4?'#ffa657':j<dataOffset?'#d2a8ff':j<codeOffset?'#3fb950':'#79c0ff';bytes.push(`<span style="color:${cls}">${u8[j].toString(16).padStart(2,'0')}</span>`);}lines.push(`<span style="color:#3fb950">${off}</span>  ${bytes.join(' ')}`);}return lines.join('\n');}
+let lastR=null;
+function swTab(id){document.querySelectorAll('.tab').forEach((t,i)=>{const ids=['run','bin','dis','vm','som'];t.classList.toggle('a',ids[i]===id);});document.querySelectorAll('.tc').forEach(el=>el.classList.remove('a'));document.getElementById('tc-'+id).classList.add('a');}
+function setStatus(ok,msg){const el=document.getElementById('stMain');el.innerHTML=(ok?'🟢 ':'🔴 ')+msg;el.className=ok?'ok':'err';}
+const EX={
+hello:`;  Hello Agent — SPAWN + message passing
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 4x4
+.AGENTS  2
+
+.CODE
+@_start:
+  SPAWN     A0, @worker
+  SOM_MAP   A0, (0,0)
+  MSG_SEND  A0, 0x42
+  WAIT      A0
+  HALT
+
+@worker:
+  MSG_RECV  R0
+  SOM_TRAIN R0, S0
+  MSG_SEND  PARENT, 0x00
+  AGENT_KILL SELF`,
+swarm:`;  Swarm Clustering — FORK explorers across SOM
+.SOMA    1.0.0
+.SOMSIZE 8x8
+.AGENTS  64
+
+.CODE
+@_start:
+  SOM_INIT  RANDOM
+  FORK      16, @explorer
+  HALT
+
+@explorer:
+  MOV R0, 1
+  SOM_WALK  SELF, GRADIENT
+  SOM_TRAIN R0, S0
+  AGENT_KILL SELF`,
+arith:`;  Arithmetic — MOV / ADD / SUB / CMP / JMP
+.SOMA    1.0.0
+.ARCH    ANY
+.SOMSIZE 4x4
+.AGENTS  1
+
+.CODE
+@_start:
+  MOV  R0, 10
+  MOV  R1, 20
+  ADD  R0, 5
+  SUB  R1, 7
+  CMP  R0, 15
+  JZ   R0, @done
+  MOV  R2, 99
+@done:
+  HALT`,
+election:`;  Leader Election — SOM_ELECT democratic vote
+.SOMA    1.0.0
+.SOMSIZE 4x4
+.AGENTS  8
+
+.CODE
+@_start:
+  SOM_INIT  RANDOM
+  FORK      4, @worker
+  SOM_ELECT R0
+  HALT
+
+@worker:
+  SOM_WALK  SELF, GRADIENT
+  AGENT_KILL SELF`};
+function loadEx(name){document.getElementById('ed').value=EX[name]||'';toggleEx();}
+function toggleEx(){const m=document.getElementById('exm');m.classList.toggle('open');}
+document.addEventListener('click',e=>{if(!document.getElementById('exd').contains(e.target))document.getElementById('exm').classList.remove('open');});
+function clearOut(){['outRun','outBin','outDis'].forEach(id=>document.getElementById(id).innerHTML='// Cleared');document.getElementById('outVM').innerHTML='// Cleared';document.getElementById('outSOM').innerHTML='// Cleared';}
+function runAsm(){const src=document.getElementById('ed').value;try{const r=assemble(src);lastR=r;document.getElementById('outBin').innerHTML=hexDump(r);document.getElementById('stBin').textContent=`Binary: ${r.buf.byteLength} bytes`;document.getElementById('stSom').textContent=`SOM: ${r.hdr.rows}×${r.hdr.cols}`;setStatus(true,'Assembled OK');swTab('bin');}catch(e){document.getElementById('outRun').innerHTML=`<span style="color:var(--red)">Assembly Error:\n${e.message}</span>`;setStatus(false,e.message);swTab('run');}}
+function showDisasm(){if(!lastR){runAsm();if(!lastR)return;}document.getElementById('outDis').textContent=disassemble(lastR);swTab('dis');}
+function runAll(){const src=document.getElementById('ed').value;const ms=parseInt(document.getElementById('maxS').value)||10000;try{const r=assemble(src);lastR=r;document.getElementById('outBin').innerHTML=hexDump(r);const vm=new VM(r,ms);const steps=vm.run();const ags=Object.values(vm.agents);const alive=ags.filter(a=>a.state!=='dead').length;const epochs=Math.max(0,...ags.map(a=>Math.round(a.S[2]||0)));let h=`<span style="color:var(--green)">✓ Execution complete</span>\n`;h+=`  Steps:    ${steps.toLocaleString()} / ${ms.toLocaleString()}\n`;h+=`  Agents:   ${ags.length} total, ${alive} alive\n`;h+=`  SOM:      ${r.hdr.rows}×${r.hdr.cols}\n`;h+=`  Epochs:   ${epochs}\n\n`;h+=`<span style="color:var(--muted)">Agent registers (R0–R3):\n`;for(const ag of ags){const cl=ag.state;h+=`  A${ag.id} [${ag.state}]  R0=${ag.R[0]} R1=${ag.R[1]} R2=${ag.R[2]} R3=${ag.R[3]}  SOM=(${ag.sx},${ag.sy})  epoch=${Math.round(ag.S[2])}\n`;}h+=`</span>`;document.getElementById('outRun').innerHTML=h;
+let vmH=`<div class="vm-grid"><div class="vc"><div class="vl">Total Agents</div><div class="vv">${ags.length}</div></div><div class="vc"><div class="vl">Steps</div><div class="vv">${steps.toLocaleString()}</div></div><div class="vc"><div class="vl">SOM Topology</div><div class="vv">${r.hdr.rows}×${r.hdr.cols}</div></div><div class="vc"><div class="vl">Epochs</div><div class="vv">${epochs}</div></div></div><div style="font-size:.73rem;color:var(--muted);margin-bottom:.3rem">AGENTS</div>`;for(const ag of ags){const cl=ag.state==='dead'?'dead':ag.state==='running'?'running':'blocked';vmH+=`<div class="ar"><span class="aid">A${ag.id}</span><span class="${cl}">${ag.state}</span>  R0=<b>${ag.R[0]}</b> R1=<b>${ag.R[1]}</b>  som=(${ag.sx},${ag.sy})</div>`;}document.getElementById('outVM').innerHTML=vmH;
+const som=vm.som;let somH=`<div style="font-size:.78rem;color:var(--muted);margin-bottom:.5rem">SOM ${som.rows}×${som.cols} — node weight intensity</div><div style="overflow:auto"><div class="som-grid" style="grid-template-columns:repeat(${som.cols},16px)">`;for(let row=0;row<som.rows;row++)for(let col=0;col<som.cols;col++){const w=som.nodes[row][col].w,mag=w.reduce((s,x)=>s+x,0)/w.length,hue=Math.round(mag*240);somH+=`<div class="som-cell" style="background:hsl(${hue},70%,50%)" title="(${row},${col}) avg=${mag.toFixed(3)}"></div>`;}somH+=`</div></div><div style="margin-top:.6rem;font-size:.7rem;color:var(--muted)">🔵 low weight · 🟡 mid · 🔴 high</div>`;document.getElementById('outSOM').innerHTML=somH;
+document.getElementById('outDis').textContent=disassemble(r);document.getElementById('stBin').textContent=`Binary: ${r.buf.byteLength} B`;document.getElementById('stAg').textContent=`Agents: ${ags.length}`;document.getElementById('stSom').textContent=`SOM: ${r.hdr.rows}×${r.hdr.cols}`;document.getElementById('stSt').textContent=`Steps: ${steps.toLocaleString()}`;setStatus(true,'OK — '+steps.toLocaleString()+' steps');swTab('run');}catch(e){document.getElementById('outRun').innerHTML=`<span style="color:var(--red)">Error: ${e.message}\n${e.stack||''}</span>`;setStatus(false,e.message);swTab('run');}}
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();runAll();}});
+document.getElementById('ed').value=EX.hello;
+</script></body></html>
