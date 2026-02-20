@@ -271,4 +271,9 @@ Issues, PRs, and ideas welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 [![Star on GitHub](https://img.shields.io/github/stars/sbhadade/soma-lang?color=ff2d78&labelColor=04000f&style=for-the-badge&logo=github&logoColor=ff2d78)](https://github.com/sbhadade/soma-lang/stargazers)
 
+---
+
+**© 2026 Swapnil Bhadade. All rights reserved.**
+
 </div>
+>
