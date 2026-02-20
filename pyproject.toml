@@ -53,8 +53,6 @@ addopts = "-v"
 line-length = 100
 
 [tool.ruff]
-line-length = 100
-[tool.ruff]
 line-length = 120
 
 [tool.ruff.lint]

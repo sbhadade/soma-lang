@@ -2,6 +2,8 @@
 """SOMA Runtime v3.0 — complete vector registers, real SOM_WALK, SPAWN_MAP grid"""
 import sys,struct,math,threading,random
 from collections import defaultdict
+from runtime.agent import AgentRegistry, AgentState, ThreadAgent
+from runtime.agent.thread_agent import spawn_agent as _spawn_agent
 
 HEADER_SIZE=32; MEM_FLAG=0x80000000; VEC_DIM=8; MAX_CALL=1024
 DTYPE_NAME={0:'INT',1:'FLOAT',2:'VEC',3:'WGHT',4:'COORD',5:'BYTES'}
@@ -335,6 +337,8 @@ class Agent:
         elif code==0xFF: self.running=False
 
 class SomaRuntime:
+    _registry = AgentRegistry.get_instance()
+
     OPNAME={
         0x01:'SPAWN',0x02:'AGENT_KILL',0x03:'FORK',0x04:'MERGE',0x05:'BARRIER',
         0x06:'SPAWN_MAP',0x07:'WAIT',0x11:'SOM_BMU',0x12:'SOM_TRAIN',
