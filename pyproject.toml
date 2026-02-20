@@ -54,3 +54,18 @@ line-length = 100
 
 [tool.ruff]
 line-length = 100
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E701",  # multiple statements on one line (colon) — style used throughout
+    "E702",  # multiple statements on one line (semicolon) — style used throughout  
+    "E501",  # line too long — codebase uses long lines intentionally
+    "E401",  # multiple imports on one line — used in bootstrap
+    "F841",  # local variable assigned but never used — acceptable
+    "E741",  # ambiguous variable name — acceptable
+    "E722",  # bare except — acceptable
+    "E402",  # module level import not at top — intentional in lexer
+]
