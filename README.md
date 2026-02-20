@@ -12,9 +12,9 @@
 
 ```
 ╔══════════════════════════════════════════════════════════════════╗
-║  OPCODE · AGENT-ID · SOM-X · SOM-Y · REGISTER · IMMEDIATE       ║
+║  OPCODE · AGENT-ID · SOM-X · SOM-Y · REGISTER · IMMEDIATE        ║
 ║  8 bits    8 bits   8 bits  8 bits   16 bits     16 bits         ║
-║                  — one 64-bit word. that's all it takes. —       ║
+║          — one 64-bit word. that's all it takes. —               ║
 ╚══════════════════════════════════════════════════════════════════╝
 ```
 
@@ -235,12 +235,15 @@ SOMA's architecture has deep roots in neuromorphic computing research:
 
 ```
 soma-lang/
-├── SOMA.grammar          ← full EBNF grammar
-├── SOMBIN.spec           ← binary format specification
-├── somasc.soma           ← self-hosting assembler (in SOMA)
-├── soma.stdlib           ← standard library
-├── examples.soma         ← hello_agent · swarm · online_learner
-└── RATIONALE.md          ← design decisions & philosophy
+├── assembler/     ← was somasc.soma in root
+├── runtime/       ← new
+├── bootstrap/     ← new
+├── soma/          ← new
+├── spec/          ← was SOMA.grammar in root
+├── stdlib/        ← was soma.stdlib in root
+├── tests/         ← new
+├── examples/      ← was examples.soma in root
+└── docs/          ← was RATIONALE.md in root
 ```
 
 ---
