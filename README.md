@@ -276,4 +276,4 @@ Issues, PRs, and ideas welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 **© 2026 Swapnil Bhadade. All rights reserved.**
 
 </div>
->
+
