@@ -235,15 +235,17 @@ SOMA's architecture has deep roots in neuromorphic computing research:
 
 ```
 soma-lang/
-├── assembler/     ← was somasc.soma in root
-├── runtime/       ← new
-├── bootstrap/     ← new
-├── soma/          ← new
-├── spec/          ← was SOMA.grammar in root
-├── stdlib/        ← was soma.stdlib in root
-├── tests/         ← new
-├── examples/      ← was examples.soma in root
-└── docs/          ← was RATIONALE.md in root
+├── .github/workflows/   ← CI/CD pipeline
+├── assembler/           ← assembler source
+├── bin/                 ← compiled binaries + SOMBIN.spec
+├── bootstrap/           ← Python bootstrap runtime
+├── docs/                ← RATIONALE.md + papers
+├── examples/            ← hello_agent · swarm · online_learner
+├── runtime/             ← C runtime source
+├── soma/                ← core language modules
+├── spec/                ← SOMA.grammar (EBNF)
+├── stdlib/              ← standard library
+└── tests/               ← pytest test suite
 ```
 
 ---
