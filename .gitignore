@@ -32,3 +32,11 @@ Thumbs.db
 .vscode/
 .idea/
 *.iml
+hello_agent
+swarm_benchmark
+*.o
+future_improvements.txt
+archive/
+examples/*.sombin
+hello.c
+hello
