@@ -211,8 +211,8 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Trusted Publishing| ✅ OIDC — no secrets |
 | Stdlib core      | ✅ Done              |
 | Examples (3)     | ✅ Done              |
-| True concurrency | 🔧 In progress       |
-| SOM scheduling   | 🔧 In progress       |
+| True concurrency | 🔧 In progress  Phase 1 Active      |
+| SOM scheduling   | 🔧 In progress  Phase 1 Active      |
 | JIT backend      | 📋 Planned           |
 | WASM backend     | 📋 Planned           |
 | Self-hosting     | 📋 Planned           |
