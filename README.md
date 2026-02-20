@@ -45,7 +45,7 @@ Registers:
   R1 = [0.4646, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000]
 ```
 
-> **340× faster** than the Python interpreter. C transpiler + `gcc -O3 -march=native`. Real numbers.
+> **689× faster** than the Python interpreter. C transpiler + `gcc -O3 -march=native`. Real numbers.
 
 ---
 
@@ -189,7 +189,7 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Phase | Timeline | Milestone |
 |-------|----------|-----------|
 | **0 — Foundation** | ✅ Done | PyPI v3.0.0 · CI · C transpiler · 340× speedup |
-| **1 — Concurrency** | Mar 2026 | True pthreads agents · MSG queues · benchmark vs Python |
+| **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× C vs Python · 200/200 tests |
 | **2 — SOM Live** | Apr 2026 | BMU/TRAIN functional · live visualizer · SOMA-Think demo |
 | **3 — Transpiler+** | May 2026 | SIMD (AVX2/NEON) · OpenMP · multi-arch · LLVM backend |
 | **4 — Ecosystem** | Jun 2026 | WASM backend · browser playground · Python/JS bindings |
@@ -211,8 +211,8 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Trusted Publishing| ✅ OIDC — no secrets |
 | Stdlib core      | ✅ Done              |
 | Examples (3)     | ✅ Done              |
-| True concurrency | 🔧 In progress  Phase 1 Active      |
-| SOM scheduling   | 🔧 In progress  Phase 1 Active      |
+| True concurrency | ✅ v3.1.1 — 689× benchmark      |
+| SOM scheduling   | 🔧 Phase 2 — in progress      |
 | JIT backend      | 📋 Planned           |
 | WASM backend     | 📋 Planned           |
 | Self-hosting     | 📋 Planned           |
