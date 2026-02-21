@@ -190,7 +190,7 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 |-------|----------|-----------|
 | **0 — Foundation** | ✅ Done | PyPI v3.0.0 · CI · C transpiler · 340× speedup |
 | **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× C vs Python · 200/200 tests |
-| **2 — SOM Live** | Apr 2026 | BMU/TRAIN functional · live visualizer · SOMA-Think demo |
+| **2 — SOM Live** | ✅ Feb 2026 | LiveSomMap · SomScheduler · SomVisualizer · 246/246 tests |
 | **3 — Transpiler+** | May 2026 | SIMD (AVX2/NEON) · OpenMP · multi-arch · LLVM backend |
 | **4 — Ecosystem** | Jun 2026 | WASM backend · browser playground · Python/JS bindings |
 | **5 — Self-hosting** | Jul 2026 | somasc.soma assembles itself · SOMA-OS bare metal demo |
@@ -205,14 +205,14 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Binary format    | ✅ Complete          |
 | ISA v1.0         | ✅ Complete          |
 | Assembler        | ✅ Working (Python)  |
-| C transpiler     | ✅ v3.0.0 — 340×    |
+| C transpiler     | ✅ v3.0.0 — 689×    |
 | PyPI package     | ✅ `pip install soma-lang` |
 | GitHub Actions CI| ✅ Matrix (3.9–3.12 × ubuntu/macOS/win) |
 | Trusted Publishing| ✅ OIDC — no secrets |
 | Stdlib core      | ✅ Done              |
 | Examples (3)     | ✅ Done              |
 | True concurrency | ✅ v3.1.1 — 689× benchmark      |
-| SOM scheduling   | 🔧 Phase 2 — in progress      |
+| SOM scheduling   | ✅ v3.1.2 — LiveSomMap + SomScheduler + Visualizer      |
 | JIT backend      | 📋 Planned           |
 | WASM backend     | 📋 Planned           |
 | Self-hosting     | 📋 Planned           |
