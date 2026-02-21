@@ -1,290 +1,461 @@
 """
-runtime/som/som_scheduler.py — Phase 2 + 2.5: SOM-driven agent scheduler
-=========================================================================
+runtime/som/som_scheduler.py — Phase 2.5 + 2.6
+================================================
 
-The SOM topology IS the scheduler.
-Agents migrate toward high-activation regions automatically after each
-SOM_TRAIN or SOM_WALK opcode — no OS scheduler intervention needed.
+Phase 2.5 (done):
+  emot_tag(), decay_protect(), predict_err(), memory_consolidate(), pulse_tick()
 
-Wires into AgentRegistry + LiveSomMap.
+Phase 2.6 (new):
+  neighbor_sync()   — NEIGHBOR_SYNC: broadcast top-K memories to SOM neighbours
+  memory_share()    — MEMORY_SHARE: directed memory transmission (legacy / death)
+  memory_load()     — MEMORY_LOAD: restore consolidated memory into working SOM
+  emot_recall()     — EMOT_RECALL: retrieve emotion tag for a SOM coord
+  surprise_calc()   — SURPRISE_CALC: compute prediction error from raw vectors
+  reorg_map()       — REORG_MAP: rebalance topology after pruning
+  decay_rate_set()  — DECAY_RATE_SET: per-region custom decay rates
+  msg_try_recv()    — MSG_TRY_RECV: non-blocking receive (no-op in scheduler layer)
 """
 from __future__ import annotations
 
 import threading
-import time
-from typing import TYPE_CHECKING, List, Optional, Tuple
-
-from runtime.som.som_map  import LiveSomMap
-from runtime.som.emotion  import EmotionRegistry, ProtectMode
-from runtime.som.memory   import MemoryManager, ConsolidationReport
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from runtime.agent.agent_registry import AgentRegistry
+    from runtime.agent import AgentRegistry
+
+from runtime.som.som_map    import LiveSomMap
+from runtime.som.emotion    import EmotionRegistry, EmotionTag, ProtectMode
+from runtime.som.memory     import MemoryManager, ConsolidationReport, MemorySharePacket
 
 
 class SomScheduler:
     """
-    Manages the relationship between live agents and the SOM topology.
+    Wires SOM topology into AgentRegistry.
 
-    Phase 2  : SOM_MAP / SOM_TRAIN / SOM_WALK / SOM_ELECT / SOM_BMU / SOM_NBHD
-    Phase 2.5: DECAY_STEP / PRUNE_CHECK / EMOT_TAG / DECAY_PROTECT /
-               PREDICT_ERR / MEMORY_CONSOLIDATE
-
-    Responsibilities
-    ----------------
-    1. Place newly spawned agents on the SOM (SOM_MAP opcode).
-    2. After SOM_TRAIN: update the spawning agent's activation.
-    3. After SOM_WALK: migrate the agent to the highest-activation neighbour.
-    4. For SOM_ELECT: find the agent whose node has the highest hit_count.
-    5. Decay lr/sigma periodically (background thread, optional).
+    Translates SOMA opcodes (as method calls) into coordinated operations
+    across LiveSomMap + EmotionRegistry + MemoryManager.
     """
 
     def __init__(self, som: LiveSomMap, registry: "AgentRegistry"):
-        self.som          = som
-        self.registry     = registry
-        self.emotion_reg  = EmotionRegistry()
-        self.memory_mgr   = MemoryManager(som, self.emotion_reg)
-        self._decay_thread: Optional[threading.Thread] = None
-        self._stop_decay   = threading.Event()
+        self.som         = som
+        self.registry    = registry
+        self.emotion_reg = EmotionRegistry()
+        self.memory_mgr  = MemoryManager(som, self.emotion_reg)
 
-    # ── Placement ────────────────────────────────────────────────────────────
+        self._decay_thread: Optional[threading.Thread] = None
+        self._decay_stop   = threading.Event()
+
+    # ── Internal coord / liveness helpers ───────────────────────────────────
+
+    @staticmethod
+    def _get_coords(handle) -> tuple:
+        """Safely extract (som_row, som_col) from any AgentHandle variant."""
+        # Preferred: flat attributes set by set_som_coords
+        if hasattr(handle, 'som_row') and hasattr(handle, 'som_col'):
+            return int(handle.som_row), int(handle.som_col)
+        # Fallback: tuple attribute
+        coords = getattr(handle, 'som_coords', None)
+        if coords is not None and len(coords) >= 2:
+            return int(coords[0]), int(coords[1])
+        return 0, 0
+
+    @staticmethod
+    def _handle_is_alive(handle) -> bool:
+        """Safely check whether an agent is alive across handle variants."""
+        state = getattr(handle, 'state', None)
+        if state is None:
+            return True
+        # AgentState enum with is_alive property
+        is_alive_attr = getattr(state, 'is_alive', None)
+        if is_alive_attr is not None:
+            return bool(is_alive_attr() if callable(is_alive_attr) else is_alive_attr)
+        # Handle-level is_alive (some variants expose it directly)
+        handle_alive = getattr(handle, 'is_alive', None)
+        if handle_alive is not None:
+            return bool(handle_alive() if callable(handle_alive) else handle_alive)
+        # Heuristic: look for DEAD in state name / value
+        state_str = getattr(state, 'name', getattr(state, 'value', str(state))).upper()
+        return 'DEAD' not in state_str
+
+    # ── Agent placement ──────────────────────────────────────────────────────
 
     def place_agent(self, agent_id: int, r: int, c: int):
-        """
-        SOM_MAP opcode: place agent at (r, c) on the topology.
-        Updates AgentRegistry so ids_at_coord() stays accurate.
-        """
+        """Place agent at SOM coordinate (r, c)."""
         r = max(0, min(self.som.rows - 1, r))
         c = max(0, min(self.som.cols - 1, c))
         self.registry.set_som_coords(agent_id, r, c)
 
-    # ── Train ────────────────────────────────────────────────────────────────
+    # ── BMU / Train / Walk ───────────────────────────────────────────────────
 
     def agent_train(self, agent_id: int, vec: List[float],
                     lr: Optional[float] = None,
                     sigma: Optional[float] = None) -> Tuple[int, int]:
-        """
-        SOM_TRAIN opcode.
-
-        1. Find BMU for vec.
-        2. Run Kohonen update.
-        3. Move agent to BMU position.
-        4. Return (bmu_r, bmu_c).
-        """
+        """SOM_BMU + SOM_TRAIN — find BMU and train. Returns new (r, c)."""
         bmu_r, bmu_c = self.som.bmu(vec)
         self.som.train(vec, bmu_r, bmu_c, lr=lr, sigma=sigma)
         self.registry.set_som_coords(agent_id, bmu_r, bmu_c)
         return bmu_r, bmu_c
 
-    # ── Walk ─────────────────────────────────────────────────────────────────
-
     def agent_walk(self, agent_id: int, gradient: bool = True) -> Tuple[int, int]:
-        """
-        SOM_WALK opcode.
-
-        Moves the agent one step on the topology.
-        gradient=True  → toward highest activation neighbour (SOM_WALK GRADIENT)
-        gradient=False → random walk
-        """
-        handle = self.registry.get_or_none(agent_id)
-        if handle is None:
-            return 0, 0
-
-        r, c = handle.som_x, handle.som_y
+        """SOM_WALK — move agent along SOM. Returns new (r, c)."""
+        handle = self.registry.get(agent_id)
+        r, c   = self._get_coords(handle)
 
         if gradient:
-            nr, nc = self.som.walk_gradient(r, c)
+            new_r, new_c = self.som.walk_gradient(r, c)
         else:
-            nr, nc = self.som.walk_random(r, c)
+            new_r, new_c = self.som.walk_random(r, c)
 
-        self.registry.set_som_coords(agent_id, nr, nc)
-        return nr, nc
-
-    # ── BMU (read-only) ──────────────────────────────────────────────────────
+        self.registry.set_som_coords(agent_id, new_r, new_c)
+        return new_r, new_c
 
     def bmu(self, vec: List[float]) -> Tuple[int, int]:
-        """SOM_BMU opcode — find closest node, don't train."""
+        """SOM_BMU without moving an agent."""
         return self.som.bmu(vec)
 
-    # ── Elect ────────────────────────────────────────────────────────────────
-
     def elect(self) -> int:
-        """
-        SOM_ELECT opcode.
-
-        Returns the agent_id of the leader — the agent whose SOM node
-        has the highest hit_count (most trained = most representative).
-        """
+        """SOM_ELECT — find leader among all registered agents."""
         positions = []
-        for handle in self.registry:
-            if handle.is_alive:
-                positions.append((handle.agent_id, handle.som_x, handle.som_y))
-
-        if not positions:
-            return 0
-
+        for h in self.registry:
+            if self._handle_is_alive(h):
+                r, c = self._get_coords(h)
+                positions.append((h.agent_id, r, c))
         return self.som.elect(positions)
 
-    # ── Sense ────────────────────────────────────────────────────────────────
-
     def sense(self, r: int, c: int) -> float:
-        """SOM_SENSE opcode — return activation at node (r, c)."""
+        """SOM_SENSE — mean weight at (r, c)."""
         return self.som.sense(r, c)
 
-    # ── Neighbourhood ────────────────────────────────────────────────────────
-
-    def neighbourhood(self, r: int, c: int, sigma: float = 1.0) -> List[Tuple[int, int, float]]:
-        """
-        SOM_NBHD opcode.
-
-        Returns list of (row, col, influence) for all nodes within
-        Gaussian neighbourhood of (r, c).
-        """
+    def neighbourhood(self, r: int, c: int,
+                      sigma: float = 1.0) -> List[Tuple[int, int, float]]:
+        """Return nearby nodes with Gaussian weights."""
+        import math
         result = []
-        for nr in range(self.som.rows):
-            for nc in range(self.som.cols):
-                dist_sq = (nr - r) ** 2 + (nc - c) ** 2
-                import math
-                influence = math.exp(-dist_sq / (2.0 * sigma * sigma))
-                if influence > 1e-4:
-                    result.append((nr, nc, influence))
+        ir = int(math.ceil(sigma * 3))
+        for dr in range(-ir, ir + 1):
+            for dc in range(-ir, ir + 1):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < self.som.rows and 0 <= nc < self.som.cols:
+                    d  = math.sqrt(dr * dr + dc * dc)
+                    h  = math.exp(-(d ** 2) / (2 * sigma ** 2))
+                    if h > 1e-4:
+                        result.append((nr, nc, h))
         return result
 
-    # ── Background decay ─────────────────────────────────────────────────────
+    # ── Background decay thread ──────────────────────────────────────────────
 
     def start_decay(self, interval_s: float = 1.0,
-                    lr_rate: float = 0.01,
-                    sigma_rate: float = 0.005):
-        """
-        Start a background thread that decays lr and sigma periodically.
-        Call stop_decay() at HALT.
-        """
-        self._stop_decay.clear()
+                    rate: float = 0.001) -> None:
+        """Start background DECAY_STEP thread."""
+        if self._decay_thread and self._decay_thread.is_alive():
+            return
+        self._decay_stop.clear()
 
         def _loop():
-            while not self._stop_decay.wait(timeout=interval_s):
-                self.som.decay(lr_rate, sigma_rate)
+            import time
+            while not self._decay_stop.wait(timeout=interval_s):
+                protected = self._protected_coords()
+                self.som.decay_step(protected_coords=protected, base_rate=rate)
+                self.pulse_tick()
 
-        self._decay_thread = threading.Thread(
-            target=_loop, daemon=True, name="soma-som-decay"
-        )
+        self._decay_thread = threading.Thread(target=_loop, daemon=True,
+                                              name="som-decay")
         self._decay_thread.start()
 
-    def stop_decay(self):
-        """Stop the background decay thread."""
-        self._stop_decay.set()
-        if self._decay_thread is not None:
+    def stop_decay(self) -> None:
+        """Stop background decay thread."""
+        self._decay_stop.set()
+        if self._decay_thread:
             self._decay_thread.join(timeout=2.0)
-            self._decay_thread = None
-
-    # ── Phase 2.5: DECAY_STEP ────────────────────────────────────────────────
 
     def decay_step(self, agent_id: int, rate: float = 0.001) -> int:
-        """
-        DECAY_STEP opcode.
-        Erodes weights on all non-activated, non-protected nodes.
-        Returns count of decayed nodes.
-        """
-        emotion_state = self.emotion_reg.get_or_create(agent_id)
-        protected     = list(emotion_state.tags.keys())
+        """DECAY_STEP — manual single decay pulse for one agent."""
+        state     = self.emotion_reg.get_or_create(agent_id)
+        protected = list(state.tags.keys())
         return self.som.decay_step(protected_coords=protected, base_rate=rate)
 
-    # ── Phase 2.5: PRUNE_CHECK ───────────────────────────────────────────────
-
     def prune_check(self, threshold: float = 0.01) -> int:
-        """
-        PRUNE_CHECK opcode.
-        Hard-deletes weights below threshold strength.
-        Returns count of pruned nodes.
-        """
-        return self.som.prune_check(threshold=threshold)
+        """PRUNE_CHECK — hard-zero weak weights."""
+        return self.som.prune_check(threshold)
 
-    # ── Phase 2.5: EMOT_TAG ──────────────────────────────────────────────────
+    # ── Phase 2.5: Emotion operations ────────────────────────────────────────
 
     def emot_tag(self, agent_id: int,
-                 valence: float, intensity: float) -> tuple:
-        """
-        EMOT_TAG opcode.
-        Tags the agent's current SOM position with emotion.
-        Returns (bmu_r, bmu_c) that was tagged.
+                 valence: float, intensity: float):
+        """EMOT_TAG — tag current SOM position of agent with emotion.
+
+        Returns (row, col) of the tagged node, or None if agent unknown.
         """
         handle = self.registry.get_or_none(agent_id)
-        r = handle.som_x if handle else 0
-        c = handle.som_y if handle else 0
-        emotion_state = self.emotion_reg.get_or_create(agent_id)
-        emotion_state.emot_tag(r, c, valence=valence, intensity=intensity)
+        if not handle:
+            return None
+        r, c = self._get_coords(handle)
+        state = self.emotion_reg.get_or_create(agent_id)
+        state.emot_tag(r, c, valence, intensity)
         return r, c
 
-    # ── Phase 2.5: DECAY_PROTECT ─────────────────────────────────────────────
-
     def decay_protect(self, agent_id: int,
+                      mode: ProtectMode = ProtectMode.CYCLES,
                       cycles: int = 100,
-                      permanent: bool = False,
-                      intensity: float = 1.0) -> None:
-        """
-        DECAY_PROTECT opcode.
-        Shields the agent's current SOM node from decay for `cycles` pulses,
-        or permanently if permanent=True.
-        """
+                      permanent: bool = False) -> None:
+        """DECAY_PROTECT — shield current SOM position from decay."""
         handle = self.registry.get_or_none(agent_id)
-        r = handle.som_x if handle else 0
-        c = handle.som_y if handle else 0
-        emotion_state = self.emotion_reg.get_or_create(agent_id)
-        mode = ProtectMode.PERMANENT if permanent else ProtectMode.CYCLES
-        emotion_state.decay_protect(r, c, mode=mode,
-                                    cycles=cycles, intensity=intensity)
-
-    # ── Phase 2.5: PREDICT_ERR ───────────────────────────────────────────────
+        if not handle:
+            return
+        if permanent:
+            mode = ProtectMode.PERMANENT
+        r, c = self._get_coords(handle)
+        state = self.emotion_reg.get_or_create(agent_id)
+        state.decay_protect(r, c, mode=mode, cycles=cycles)
 
     def predict_err(self, agent_id: int, vec: List[float]) -> float:
-        """
-        PREDICT_ERR opcode.
-        Computes surprise: distance from agent's current position
-        to actual BMU for `vec`. Returns normalised [0,1].
-        """
+        """PREDICT_ERR — measure surprise vs last SOM position."""
         handle = self.registry.get_or_none(agent_id)
-        pred_r = handle.som_x if handle else 0
-        pred_c = handle.som_y if handle else 0
-
+        if not handle:
+            return 0.0
         bmu_r, bmu_c = self.som.bmu(vec)
-        emotion_state = self.emotion_reg.get_or_create(agent_id)
-        raw = emotion_state.predict_err(bmu_r, bmu_c, pred_r, pred_c)
-        return emotion_state.normalise_err(raw, self.som.rows, self.som.cols)
-
-    # ── Phase 2.5: MEMORY_CONSOLIDATE ────────────────────────────────────────
+        prev_r, prev_c = self._get_coords(handle)
+        state = self.emotion_reg.get_or_create(agent_id)
+        err   = state.predict_err(
+            bmu_r, bmu_c,
+            prev_r, prev_c,
+            self.som.rows, self.som.cols,
+        )
+        self.registry.set_som_coords(agent_id, bmu_r, bmu_c)
+        return err
 
     def memory_consolidate(self, agent_id: int) -> "ConsolidationReport":
-        """
-        MEMORY_CONSOLIDATE opcode — the SOMA "REM sleep".
-        Promotes high-salience weights to long-term storage,
-        accelerates decay on low-salience nodes, prunes dead weights.
-        """
+        """MEMORY_CONSOLIDATE — the SOMA REM sleep."""
         return self.memory_mgr.consolidate(agent_id)
 
-    # ── Phase 2.5: PULSE tick ─────────────────────────────────────────────────
+    # ── Phase 2.6: EMOT_RECALL ───────────────────────────────────────────────
+
+    def emot_recall(self, agent_id: int,
+                    r: Optional[int] = None,
+                    c: Optional[int] = None) -> Optional[EmotionTag]:
+        """
+        EMOT_RECALL opcode — retrieve emotion tag.
+
+        If (r, c) omitted: uses agent's current SOM position.
+        Returns EmotionTag or None if coord was never emotionally tagged.
+        """
+        handle = self.registry.get_or_none(agent_id)
+        if not handle:
+            return None
+        hr, hc = self._get_coords(handle)
+        row = r if r is not None else hr
+        col = c if c is not None else hc
+        state = self.emotion_reg.get_or_create(agent_id)
+        return state.emot_recall(row, col)
+
+    # ── Phase 2.6: SURPRISE_CALC ─────────────────────────────────────────────
+
+    def surprise_calc(self, agent_id: int,
+                      actual_vec:    List[float],
+                      predicted_vec: List[float],
+                      threshold:     float = 0.25,
+                      auto_tag:      bool  = True) -> Tuple[float, bool]:
+        """
+        SURPRISE_CALC opcode — measure prediction error and optionally
+        auto-fire EMOT_TAG if error exceeds threshold.
+
+        Parameters
+        ----------
+        auto_tag  : if True and is_surprising, automatically call
+                    EMOT_TAG with positive valence (discovery signal)
+
+        Returns (error_magnitude, is_surprising)
+        """
+        state = self.emotion_reg.get_or_create(agent_id)
+        err, is_surprising = state.surprise_calc(actual_vec, predicted_vec,
+                                                 threshold=threshold)
+        if is_surprising and auto_tag:
+            self.emot_tag(agent_id, valence=0.7, intensity=min(err, 1.0))
+
+        return err, is_surprising
+
+    # ── Phase 2.6: NEIGHBOR_SYNC ─────────────────────────────────────────────
+
+    def neighbor_sync(self, agent_id: int,
+                      radius: float = 2.0,
+                      top_n:  int   = 5,
+                      attenuation: float = 0.4) -> Dict[int, int]:
+        """
+        NEIGHBOR_SYNC opcode — share top-N emotional memories with all
+        agents currently within SOM radius.
+
+        This is the cultural transmission mechanism for LIVING agents.
+        (Dying agents use memory_share() instead.)
+
+        Parameters
+        ----------
+        radius      : topological radius (SOM grid units)
+        top_n       : how many memory clusters to broadcast
+        attenuation : how strongly neighbours weight the foreign memories
+
+        Returns {neighbour_agent_id: absorbed_count}
+        """
+        handle = self.registry.get_or_none(agent_id)
+        if not handle:
+            return {}
+
+        # Build share packet from sender
+        sender_mem = self.memory_mgr.get_or_create(agent_id)
+        packet = sender_mem.build_share_packet(top_n=top_n,
+                                               attenuation=attenuation)
+
+        # Find agents within radius on the SOM grid
+        my_r, my_c = self._get_coords(handle)
+        near_coords = set(self.som.neighbour_coords(my_r, my_c, radius))
+
+        results: Dict[int, int] = {}
+        for h in self.registry:
+            if h.agent_id == agent_id:
+                continue
+            if not self._handle_is_alive(h):
+                continue
+            h_r, h_c = self._get_coords(h)
+            if (h_r, h_c) in near_coords:
+                receiver = self.memory_mgr.get_or_create(h.agent_id)
+                absorbed = receiver.absorb_share_packet(packet)
+                if absorbed > 0:
+                    results[h.agent_id] = absorbed
+
+        return results
+
+    # ── Phase 2.6: MEMORY_SHARE ──────────────────────────────────────────────
+
+    def memory_share(self, from_agent_id: int,
+                     to_agent_id: int,
+                     top_n:       int   = 10,
+                     attenuation: float = 0.5) -> int:
+        """
+        MEMORY_SHARE opcode — directed experience transmission.
+
+        Called when one agent explicitly shares with another —
+        typically a dying agent leaving a legacy.
+
+        Returns number of nodes/tags absorbed by receiver.
+        """
+        return self.memory_mgr.share(from_agent_id, to_agent_id,
+                                     top_n=top_n, attenuation=attenuation)
+
+    def memory_share_broadcast(self, from_agent_id: int,
+                                top_n:       int   = 10,
+                                attenuation: float = 0.3) -> Dict[int, int]:
+        """
+        MEMORY_SHARE ALL — dying agent broadcasts to all live agents.
+        Auto-registers all live registry agents into MemoryManager first.
+        Returns {agent_id: absorbed_count} for every recipient.
+        """
+        for h in self.registry:
+            if self._handle_is_alive(h) and h.agent_id != from_agent_id:
+                self.memory_mgr.get_or_create(h.agent_id)
+        return self.memory_mgr.share_to_all(from_agent_id,
+                                            top_n=top_n,
+                                            attenuation=attenuation)
+
+    # ── Phase 2.6: MEMORY_LOAD ───────────────────────────────────────────────
+
+    def memory_load(self, agent_id: int,
+                    min_salience: float = 0.0) -> int:
+        """
+        MEMORY_LOAD opcode — restore consolidated long-term memories
+        back into the working SOM.
+
+        Used on agent restart or after a wipe of the working SOM.
+        Returns number of nodes restored.
+        """
+        return self.memory_mgr.load(agent_id, min_salience=min_salience)
+
+    # ── Phase 2.6: REORG_MAP ─────────────────────────────────────────────────
+
+    def reorg_map(self, dead_threshold: float = 1e-4,
+                  spread_radius: int = 2) -> int:
+        """
+        REORG_MAP opcode — rebalance SOM topology after heavy pruning.
+
+        Dead nodes are re-seeded from neighbours. Prevents permanent
+        dead zones. Call after MEMORY_CONSOLIDATE for best results.
+
+        Returns number of nodes reseeded.
+        """
+        return self.som.reorg_map(dead_threshold=dead_threshold,
+                                  spread_radius=spread_radius)
+
+    # ── Phase 2.6: DECAY_RATE_SET ────────────────────────────────────────────
+
+    def decay_rate_set(self, agent_id: int,
+                       radius: float = 2.0,
+                       rate:   float = 0.001) -> int:
+        """
+        DECAY_RATE_SET opcode — set custom decay rate around agent's
+        current SOM position.
+
+        Low rate (0.0001) = expertise zone — build deep memory here.
+        High rate (0.05)  = stale zone — flush this region quickly.
+
+        Returns number of nodes updated.
+        """
+        handle = self.registry.get_or_none(agent_id)
+        if not handle:
+            return 0
+        r, c = self._get_coords(handle)
+        return self.som.set_region_decay_rate(
+            r, c,
+            radius=radius, rate=rate,
+        )
+
+    # ── Phase 2.6: MSG_TRY_RECV ──────────────────────────────────────────────
+
+    def msg_try_recv(self, agent_id: int) -> Optional[object]:
+        """
+        MSG_TRY_RECV opcode — non-blocking receive.
+
+        In the scheduler layer this is a no-op placeholder.
+        Real implementation lives in the runtime mailbox system.
+        Returns None if no message available (scheduler has no mailbox).
+        """
+        return None
+
+    # ── Pulse tick ───────────────────────────────────────────────────────────
 
     def pulse_tick(self) -> None:
-        """
-        Called on every PULSE heartbeat.
-        Advances emotion protection counters + memory pulse counters.
-        """
+        """Called on every PULSE heartbeat — advances all counters."""
         self.emotion_reg.tick_all()
         self.memory_mgr.tick_all()
 
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict:
-        """Full state dump — used by visualizer and tests."""
-        agent_positions = []
-        for handle in self.registry:
-            if handle.is_alive:
-                agent_positions.append({
-                    "id":    handle.agent_id,
-                    "som_r": handle.som_x,
-                    "som_c": handle.som_y,
-                })
-
+        agents = []
+        for h in self.registry:
+            r, c = self._get_coords(h)
+            agents.append({
+                "agent_id": h.agent_id,
+                "id":       h.agent_id,   # alias expected by SomVisualizer
+                "som_r":    r,
+                "som_c":    c,
+                "som_row":  r,
+                "som_col":  c,
+                "alive":    self._handle_is_alive(h),
+            })
         return {
-            "som":    self.som.snapshot(),
-            "agents": agent_positions,
+            "som":     self.som.snapshot(),
+            "emotion": self.emotion_reg.snapshot(),
+            "memory":  self.memory_mgr.snapshot(),
+            "agents":  agents,
         }
+
+    # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _protected_coords(self) -> List[Tuple[int, int]]:
+        """Collect all emotion-protected (r, c) across all agents."""
+        protected = set()
+        for h in self.registry:
+            state = self.emotion_reg.get_or_none(h.agent_id) \
+                    if hasattr(self.emotion_reg, 'get_or_none') \
+                    else self.emotion_reg.get_or_create(h.agent_id)
+            for coord in state.tags:
+                protected.add(coord)
+        return list(protected)

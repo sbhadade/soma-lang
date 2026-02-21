@@ -1,0 +1,88 @@
+; soma_life.soma — a lively agent
+; ================================
+; Paper: "A Path to AGI Part II: Liveliness"
+;
+; This agent has: a heartbeat, goals, emotions, memory, and decay.
+; It will become more itself over time. It will forget. It will grow.
+;
+; Run: soma run soma_life.soma
+;      soma transpile soma_life.soma -o soma_life.c && gcc -O3 soma_life.c -lm -lpthread
+
+.SOMA        3.0.0
+.ARCH        ANY
+.SOMSIZE     32x32          ; 1024 possible specialisation zones
+.AGENTS      64
+
+.DATA
+  goal_vec   : VEC = RANDOM ; each agent starts with a random purpose
+  decay_rate : F32 = 0.001  ; 0.1% weight loss per idle pulse
+  prune_min  : F32 = 0.005  ; hard-delete weights below 0.5%
+
+.CODE
+@_start:
+  SOM_INIT    RANDOM             ; randomise weight map
+  FORK        64, @be_alive      ; spawn all agents
+  HALT
+
+@be_alive:
+  ; ── BIRTH: each agent declares its purpose ─────────────────────────
+  MOV         R0, [goal_vec]     ; load random goal vector
+  SOM_BMU     R0, S0             ; find closest node to goal
+  SOM_TRAIN   R0, S0             ; claim that territory
+
+  ; ── MAIN LOOP: PULSE-driven ────────────────────────────────────────
+@heartbeat:
+  ; 1. BREATHE — decay idle weights (forgetting)
+  DECAY_STEP  SELF, [decay_rate]
+
+  ; 2. NAVIGATE — move toward goal
+  SOM_WALK    SELF, GRADIENT     ; step toward highest activation
+
+  ; 3. PERCEIVE — absorb new input if available
+  MSG_TRY_RECV R1                ; non-blocking receive
+  JZ          R1, @socialize     ; nothing arrived → skip to socialise
+
+  SOM_BMU     R1, S0             ; find best matching node for input
+  SOM_TRAIN   R1, S0             ; learn from it
+
+  ; 4. FEEL — was this surprising?
+  SURPRISE_CALC R1, R0           ; compute prediction error → S3
+  MOV           R2, S3           ; copy error to R2
+  CMP           R2, 0x190        ; threshold = 400 (= 0.4 * 1000)
+  JNZ           @low_significance
+
+  EMOT_TAG      0x4C, R2         ; valence=+0.7 (0x4C*1000), intensity=error
+  DECAY_PROTECT SELF, 300        ; protect these weights for 300 pulses
+
+  ; Cultural emission: every 5th high-emotion event, share with neighbours
+  CMP         S4, 5              ; S4 = emotion event counter
+  JNZ         @socialize
+  NEIGHBOR_SYNC SELF, RADIUS=2   ; share top-5 memories with nearby agents
+  MOV         S4, 0              ; reset counter
+  JMP         @socialize
+
+@low_significance:
+  ; no tag — weights will decay normally (forgetting is intelligence)
+
+@socialize:
+  ; 5. SHARE — emit experience to SOM neighbours periodically
+  ; (NEIGHBOR_SYNC runs above on high-emotion events)
+
+  ; 6. SLEEP CHECK — consolidate memory every 10,000 heartbeats
+  CMP         S5, 0x2710         ; S5 = heartbeat counter, 0x2710 = 10000
+  JNZ         @done_sleep
+
+  MEMORY_CONSOLIDATE SELF        ; promote top 10% to long-term
+  PRUNE_CHECK SELF, [prune_min]  ; hard-delete weak weights
+  REORG_MAP   SELF               ; fill dead zones from neighbours
+  MOV         S5, 0              ; reset sleep counter
+
+@done_sleep:
+  ADD         S5, 1              ; increment heartbeat counter
+  JMP         @heartbeat         ; loop forever — the heartbeat drives it all
+
+; When a SOMA agent receives AGENT_KILL, it should first call:
+;   MEMORY_SHARE SELF, ALL, top=10   ; leave a legacy
+; Then let the runtime kill it.
+; The neighbours are now slightly shaped by what this agent found significant.
+; That is culture.
