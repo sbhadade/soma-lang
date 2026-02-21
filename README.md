@@ -24,6 +24,8 @@ are encoded directly into the **instruction word itself.**
 
 *Most languages run on operating systems. SOMA is the operating system.*
 
+> **v3.2.0** — 300 tests · emotional memory · REM consolidation · 689× C speedup
+
 </div>
 
 ---
@@ -174,6 +176,48 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 
 ---
 
+## 🧬 Phase 2.5 — Liveliness
+
+SOMA v3.2.0 implements the amygdala + hippocampus primitives from  
+*"A Path to AGI Part II: Liveliness"*:
+
+```
+High surprise (PREDICT_ERR) → high emotion tag → slow decay → strong memory
+Low surprise                → low tag          → fast decay → forgotten
+```
+
+### Emotional Memory — `EMOT_TAG` / `DECAY_PROTECT`
+
+```python
+from runtime.som.emotion import EmotionRegistry, ProtectMode
+
+em  = EmotionRegistry()
+es  = em.get_or_create(agent_id=0)
+
+# Tag a SOM node after a surprising input
+es.emot_tag(row=2, col=2, valence=0.9, intensity=0.8)
+
+# Shield it from decay for 100 pulses
+es.decay_protect(2, 2, mode=ProtectMode.CYCLES, cycles=100)
+```
+
+### Memory Consolidation — `MEMORY_CONSOLIDATE`
+
+```python
+from runtime.som.memory import MemoryManager
+
+mem    = MemoryManager(som, em)
+report = mem.consolidate(agent_id=0)
+# promoted=1, pruned=0, decayed=8, took=0.08ms
+```
+
+Two-tier system mirrors hippocampal memory consolidation:
+- **Working SOM** — volatile, fast decay, 100 Hz pulse rate
+- **Long-term SOM** — persistent; top 10% by emotion salience promoted each REM cycle
+- **Hard prune** — nodes below 0.5% weight strength are removed
+
+---
+
 ## 📦 Register Architecture
 
 | Register  | Count | Width   | Purpose                           |
@@ -189,8 +233,9 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Phase | Timeline | Milestone |
 |-------|----------|-----------|
 | **0 — Foundation** | ✅ Done | PyPI v3.0.0 · CI · C transpiler · 340× speedup |
-| **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× C vs Python · 200/200 tests |
-| **2 — SOM Live** | ✅ Feb 2026 | LiveSomMap · SomScheduler · SomVisualizer · 246/246 tests |
+| **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× C vs Python · 246/246 tests |
+| **2 — SOM Live** | ✅ Feb 2026 | LiveSomMap · SomScheduler · SomVisualizer · 300/300 tests |
+| **2.5 — Liveliness** | ✅ Feb 2026 | EmotionRegistry · MemoryManager · decay + consolidation · 300 tests |
 | **3 — Transpiler+** | May 2026 | SIMD (AVX2/NEON) · OpenMP · multi-arch · LLVM backend |
 | **4 — Ecosystem** | Jun 2026 | WASM backend · browser playground · Python/JS bindings |
 | **5 — Self-hosting** | Jul 2026 | somasc.soma assembles itself · SOMA-OS bare metal demo |
@@ -203,7 +248,7 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 |------------------|----------------------|
 | Grammar spec     | ✅ Complete          |
 | Binary format    | ✅ Complete          |
-| ISA v1.0         | ✅ Complete          |
+| ISA v3.0         | ✅ Complete          |
 | Assembler        | ✅ Working (Python)  |
 | C transpiler     | ✅ v3.0.0 — 689×    |
 | PyPI package     | ✅ `pip install soma-lang` |
@@ -211,8 +256,11 @@ Agents migrate toward high-activation regions. Coordination emerges from the map
 | Trusted Publishing| ✅ OIDC — no secrets |
 | Stdlib core      | ✅ Done              |
 | Examples (3)     | ✅ Done              |
-| True concurrency | ✅ v3.1.1 — 689× benchmark      |
+| True concurrency | ✅ v3.1.0 — AgentRegistry + real pthreads      |
 | SOM scheduling   | ✅ v3.1.2 — LiveSomMap + SomScheduler + Visualizer      |
+| Emotional memory | ✅ v3.2.0 — EmotionRegistry · EMOT_TAG · DECAY_PROTECT |
+| Memory consolidation | ✅ v3.2.0 — TwoTierMemory · MEMORY_CONSOLIDATE (REM) |
+| Liveliness decay | ✅ v3.2.0 — decay_step · prune_check · protect modes |
 | JIT backend      | 📋 Planned           |
 | WASM backend     | 📋 Planned           |
 | Self-hosting     | 📋 Planned           |
@@ -276,4 +324,3 @@ Issues, PRs, and ideas welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 **© 2026 Swapnil Bhadade. All rights reserved.**
 
 </div>
-

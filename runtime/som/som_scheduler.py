@@ -1,6 +1,6 @@
 """
-runtime/som/som_scheduler.py — Phase 2: SOM-driven agent scheduler
-===================================================================
+runtime/som/som_scheduler.py — Phase 2 + 2.5: SOM-driven agent scheduler
+=========================================================================
 
 The SOM topology IS the scheduler.
 Agents migrate toward high-activation regions automatically after each
@@ -14,7 +14,9 @@ import threading
 import time
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from runtime.som.som_map import LiveSomMap
+from runtime.som.som_map  import LiveSomMap
+from runtime.som.emotion  import EmotionRegistry, ProtectMode
+from runtime.som.memory   import MemoryManager, ConsolidationReport
 
 if TYPE_CHECKING:
     from runtime.agent.agent_registry import AgentRegistry
@@ -23,6 +25,10 @@ if TYPE_CHECKING:
 class SomScheduler:
     """
     Manages the relationship between live agents and the SOM topology.
+
+    Phase 2  : SOM_MAP / SOM_TRAIN / SOM_WALK / SOM_ELECT / SOM_BMU / SOM_NBHD
+    Phase 2.5: DECAY_STEP / PRUNE_CHECK / EMOT_TAG / DECAY_PROTECT /
+               PREDICT_ERR / MEMORY_CONSOLIDATE
 
     Responsibilities
     ----------------
@@ -34,8 +40,10 @@ class SomScheduler:
     """
 
     def __init__(self, som: LiveSomMap, registry: "AgentRegistry"):
-        self.som      = som
-        self.registry = registry
+        self.som          = som
+        self.registry     = registry
+        self.emotion_reg  = EmotionRegistry()
+        self.memory_mgr   = MemoryManager(som, self.emotion_reg)
         self._decay_thread: Optional[threading.Thread] = None
         self._stop_decay   = threading.Event()
 
@@ -168,6 +176,100 @@ class SomScheduler:
         if self._decay_thread is not None:
             self._decay_thread.join(timeout=2.0)
             self._decay_thread = None
+
+    # ── Phase 2.5: DECAY_STEP ────────────────────────────────────────────────
+
+    def decay_step(self, agent_id: int, rate: float = 0.001) -> int:
+        """
+        DECAY_STEP opcode.
+        Erodes weights on all non-activated, non-protected nodes.
+        Returns count of decayed nodes.
+        """
+        emotion_state = self.emotion_reg.get_or_create(agent_id)
+        protected     = list(emotion_state.tags.keys())
+        return self.som.decay_step(protected_coords=protected, base_rate=rate)
+
+    # ── Phase 2.5: PRUNE_CHECK ───────────────────────────────────────────────
+
+    def prune_check(self, threshold: float = 0.01) -> int:
+        """
+        PRUNE_CHECK opcode.
+        Hard-deletes weights below threshold strength.
+        Returns count of pruned nodes.
+        """
+        return self.som.prune_check(threshold=threshold)
+
+    # ── Phase 2.5: EMOT_TAG ──────────────────────────────────────────────────
+
+    def emot_tag(self, agent_id: int,
+                 valence: float, intensity: float) -> tuple:
+        """
+        EMOT_TAG opcode.
+        Tags the agent's current SOM position with emotion.
+        Returns (bmu_r, bmu_c) that was tagged.
+        """
+        handle = self.registry.get_or_none(agent_id)
+        r = handle.som_x if handle else 0
+        c = handle.som_y if handle else 0
+        emotion_state = self.emotion_reg.get_or_create(agent_id)
+        emotion_state.emot_tag(r, c, valence=valence, intensity=intensity)
+        return r, c
+
+    # ── Phase 2.5: DECAY_PROTECT ─────────────────────────────────────────────
+
+    def decay_protect(self, agent_id: int,
+                      cycles: int = 100,
+                      permanent: bool = False,
+                      intensity: float = 1.0) -> None:
+        """
+        DECAY_PROTECT opcode.
+        Shields the agent's current SOM node from decay for `cycles` pulses,
+        or permanently if permanent=True.
+        """
+        handle = self.registry.get_or_none(agent_id)
+        r = handle.som_x if handle else 0
+        c = handle.som_y if handle else 0
+        emotion_state = self.emotion_reg.get_or_create(agent_id)
+        mode = ProtectMode.PERMANENT if permanent else ProtectMode.CYCLES
+        emotion_state.decay_protect(r, c, mode=mode,
+                                    cycles=cycles, intensity=intensity)
+
+    # ── Phase 2.5: PREDICT_ERR ───────────────────────────────────────────────
+
+    def predict_err(self, agent_id: int, vec: List[float]) -> float:
+        """
+        PREDICT_ERR opcode.
+        Computes surprise: distance from agent's current position
+        to actual BMU for `vec`. Returns normalised [0,1].
+        """
+        handle = self.registry.get_or_none(agent_id)
+        pred_r = handle.som_x if handle else 0
+        pred_c = handle.som_y if handle else 0
+
+        bmu_r, bmu_c = self.som.bmu(vec)
+        emotion_state = self.emotion_reg.get_or_create(agent_id)
+        raw = emotion_state.predict_err(bmu_r, bmu_c, pred_r, pred_c)
+        return emotion_state.normalise_err(raw, self.som.rows, self.som.cols)
+
+    # ── Phase 2.5: MEMORY_CONSOLIDATE ────────────────────────────────────────
+
+    def memory_consolidate(self, agent_id: int) -> "ConsolidationReport":
+        """
+        MEMORY_CONSOLIDATE opcode — the SOMA "REM sleep".
+        Promotes high-salience weights to long-term storage,
+        accelerates decay on low-salience nodes, prunes dead weights.
+        """
+        return self.memory_mgr.consolidate(agent_id)
+
+    # ── Phase 2.5: PULSE tick ─────────────────────────────────────────────────
+
+    def pulse_tick(self) -> None:
+        """
+        Called on every PULSE heartbeat.
+        Advances emotion protection counters + memory pulse counters.
+        """
+        self.emotion_reg.tick_all()
+        self.memory_mgr.tick_all()
 
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
