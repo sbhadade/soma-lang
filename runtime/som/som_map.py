@@ -185,7 +185,7 @@ class LiveSomMap:
         Returns winning agent_id.
         """
         if not agent_positions:
-            return -1
+            return 0
 
         best_score = -1
         leader_id  = agent_positions[0][0]
@@ -406,6 +406,18 @@ class LiveSomMap:
                 for r in range(self.rows)
                 for c in range(self.cols)
             ) / total
+        with self._lock:
+            nodes = [
+                {
+                    "row": r, "col": c,
+                    "activation": self.nodes[r][c].activation,
+                    "hit_count":  self.nodes[r][c].hit_count,
+                    "strength":   round(self.node_strength(r, c), 4),
+                    "is_dead":    node_is_dead(self.nodes[r][c]),
+                }
+                for r in range(self.rows)
+                for c in range(self.cols)
+            ]
         return {
             "rows": self.rows, "cols": self.cols,
             "epoch": self.epoch,
@@ -413,6 +425,7 @@ class LiveSomMap:
             "dead_nodes": dead,
             "live_nodes": total - dead,
             "mean_node_strength": round(mean_str, 4),
+            "nodes": nodes,
         }
 
 

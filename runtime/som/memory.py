@@ -134,6 +134,7 @@ class TwoTierMemory:
         self._longterm: Dict[Tuple[int,int], LongTermNode] = {}
         self._lt_lock   = threading.Lock()
         self.pulse_count = 0
+        self._consolidation_count = 0
 
     # ── MEMORY_CONSOLIDATE ───────────────────────────────────────────────────
 
@@ -188,6 +189,7 @@ class TwoTierMemory:
         report.pruned = pruned
 
         report.duration_s = time.monotonic() - t0
+        self._consolidation_count += 1
         return report
 
     # ── MEMORY_SHARE (Phase 2.6) ─────────────────────────────────────────────
@@ -359,7 +361,9 @@ class TwoTierMemory:
             "agent_id":        self.agent_id,
             "pulse_count":     self.pulse_count,
             "longterm_nodes":  lt_count,
+            "lt_nodes":        lt_count,   # alias expected by tests
             "mean_lt_salience": mean_sal,
+            "consolidations":  self._consolidation_count,
         }
 
 

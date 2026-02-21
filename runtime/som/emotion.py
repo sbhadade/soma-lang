@@ -199,7 +199,7 @@ class AgentEmotionState:
 
     def predict_err(self, bmu_r: int, bmu_c: int,
                     prev_bmu_r: int, prev_bmu_c: int,
-                    rows: int, cols: int) -> float:
+                    rows: int = 10, cols: int = 10) -> float:
         """
         PREDICT_ERR opcode — compute normalised surprise.
         Surprise = topological distance between predicted BMU
@@ -381,6 +381,12 @@ class AgentEmotionState:
                 "mean_prediction_error": (
                     sum(self.prediction_errors) / len(self.prediction_errors)
                 ) if self.prediction_errors else 0.0,
+                "tagged_nodes": [
+                    {"row": r, "col": c,
+                     "valence": t.valence, "intensity": t.intensity,
+                     "salience": t.salience}
+                    for (r, c), t in self.tags.items()
+                ],
             }
 
 

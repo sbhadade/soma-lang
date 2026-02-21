@@ -45,6 +45,38 @@ class SomScheduler:
         self._decay_thread: Optional[threading.Thread] = None
         self._decay_stop   = threading.Event()
 
+    # ── Internal coord / liveness helpers ───────────────────────────────────
+
+    @staticmethod
+    def _get_coords(handle) -> tuple:
+        """Safely extract (som_row, som_col) from any AgentHandle variant."""
+        # Preferred: flat attributes set by set_som_coords
+        if hasattr(handle, 'som_row') and hasattr(handle, 'som_col'):
+            return int(handle.som_row), int(handle.som_col)
+        # Fallback: tuple attribute
+        coords = getattr(handle, 'som_coords', None)
+        if coords is not None and len(coords) >= 2:
+            return int(coords[0]), int(coords[1])
+        return 0, 0
+
+    @staticmethod
+    def _handle_is_alive(handle) -> bool:
+        """Safely check whether an agent is alive across handle variants."""
+        state = getattr(handle, 'state', None)
+        if state is None:
+            return True
+        # AgentState enum with is_alive property
+        is_alive_attr = getattr(state, 'is_alive', None)
+        if is_alive_attr is not None:
+            return bool(is_alive_attr() if callable(is_alive_attr) else is_alive_attr)
+        # Handle-level is_alive (some variants expose it directly)
+        handle_alive = getattr(handle, 'is_alive', None)
+        if handle_alive is not None:
+            return bool(handle_alive() if callable(handle_alive) else handle_alive)
+        # Heuristic: look for DEAD in state name / value
+        state_str = getattr(state, 'name', getattr(state, 'value', str(state))).upper()
+        return 'DEAD' not in state_str
+
     # ── Agent placement ──────────────────────────────────────────────────────
 
     def place_agent(self, agent_id: int, r: int, c: int):
@@ -67,7 +99,7 @@ class SomScheduler:
     def agent_walk(self, agent_id: int, gradient: bool = True) -> Tuple[int, int]:
         """SOM_WALK — move agent along SOM. Returns new (r, c)."""
         handle = self.registry.get(agent_id)
-        r, c   = handle.som_row, handle.som_col
+        r, c   = self._get_coords(handle)
 
         if gradient:
             new_r, new_c = self.som.walk_gradient(r, c)
@@ -83,11 +115,11 @@ class SomScheduler:
 
     def elect(self) -> int:
         """SOM_ELECT — find leader among all registered agents."""
-        positions = [
-            (h.agent_id, h.som_row, h.som_col)
-            for h in self.registry
-            if h.state.is_alive
-        ]
+        positions = []
+        for h in self.registry:
+            if self._handle_is_alive(h):
+                r, c = self._get_coords(h)
+                positions.append((h.agent_id, r, c))
         return self.som.elect(positions)
 
     def sense(self, r: int, c: int) -> float:
@@ -149,25 +181,32 @@ class SomScheduler:
     # ── Phase 2.5: Emotion operations ────────────────────────────────────────
 
     def emot_tag(self, agent_id: int,
-                 valence: float, intensity: float) -> Optional[EmotionTag]:
-        """EMOT_TAG — tag current SOM position of agent with emotion."""
+                 valence: float, intensity: float):
+        """EMOT_TAG — tag current SOM position of agent with emotion.
+
+        Returns (row, col) of the tagged node, or None if agent unknown.
+        """
         handle = self.registry.get_or_none(agent_id)
         if not handle:
             return None
+        r, c = self._get_coords(handle)
         state = self.emotion_reg.get_or_create(agent_id)
-        return state.emot_tag(handle.som_row, handle.som_col,
-                              valence, intensity)
+        state.emot_tag(r, c, valence, intensity)
+        return r, c
 
     def decay_protect(self, agent_id: int,
                       mode: ProtectMode = ProtectMode.CYCLES,
-                      cycles: int = 100) -> None:
+                      cycles: int = 100,
+                      permanent: bool = False) -> None:
         """DECAY_PROTECT — shield current SOM position from decay."""
         handle = self.registry.get_or_none(agent_id)
         if not handle:
             return
+        if permanent:
+            mode = ProtectMode.PERMANENT
+        r, c = self._get_coords(handle)
         state = self.emotion_reg.get_or_create(agent_id)
-        state.decay_protect(handle.som_row, handle.som_col,
-                            mode=mode, cycles=cycles)
+        state.decay_protect(r, c, mode=mode, cycles=cycles)
 
     def predict_err(self, agent_id: int, vec: List[float]) -> float:
         """PREDICT_ERR — measure surprise vs last SOM position."""
@@ -175,10 +214,11 @@ class SomScheduler:
         if not handle:
             return 0.0
         bmu_r, bmu_c = self.som.bmu(vec)
+        prev_r, prev_c = self._get_coords(handle)
         state = self.emotion_reg.get_or_create(agent_id)
         err   = state.predict_err(
             bmu_r, bmu_c,
-            handle.som_row, handle.som_col,
+            prev_r, prev_c,
             self.som.rows, self.som.cols,
         )
         self.registry.set_som_coords(agent_id, bmu_r, bmu_c)
@@ -202,8 +242,9 @@ class SomScheduler:
         handle = self.registry.get_or_none(agent_id)
         if not handle:
             return None
-        row = r if r is not None else handle.som_row
-        col = c if c is not None else handle.som_col
+        hr, hc = self._get_coords(handle)
+        row = r if r is not None else hr
+        col = c if c is not None else hc
         state = self.emotion_reg.get_or_create(agent_id)
         return state.emot_recall(row, col)
 
@@ -264,16 +305,17 @@ class SomScheduler:
                                                attenuation=attenuation)
 
         # Find agents within radius on the SOM grid
-        my_r, my_c = handle.som_row, handle.som_col
+        my_r, my_c = self._get_coords(handle)
         near_coords = set(self.som.neighbour_coords(my_r, my_c, radius))
 
         results: Dict[int, int] = {}
         for h in self.registry:
             if h.agent_id == agent_id:
                 continue
-            if not h.state.is_alive:
+            if not self._handle_is_alive(h):
                 continue
-            if (h.som_row, h.som_col) in near_coords:
+            h_r, h_c = self._get_coords(h)
+            if (h_r, h_c) in near_coords:
                 receiver = self.memory_mgr.get_or_create(h.agent_id)
                 absorbed = receiver.absorb_share_packet(packet)
                 if absorbed > 0:
@@ -307,7 +349,7 @@ class SomScheduler:
         Returns {agent_id: absorbed_count} for every recipient.
         """
         for h in self.registry:
-            if h.state.is_alive and h.agent_id != from_agent_id:
+            if self._handle_is_alive(h) and h.agent_id != from_agent_id:
                 self.memory_mgr.get_or_create(h.agent_id)
         return self.memory_mgr.share_to_all(from_agent_id,
                                             top_n=top_n,
@@ -358,8 +400,9 @@ class SomScheduler:
         handle = self.registry.get_or_none(agent_id)
         if not handle:
             return 0
+        r, c = self._get_coords(handle)
         return self.som.set_region_decay_rate(
-            handle.som_row, handle.som_col,
+            r, c,
             radius=radius, rate=rate,
         )
 
@@ -385,10 +428,23 @@ class SomScheduler:
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict:
+        agents = []
+        for h in self.registry:
+            r, c = self._get_coords(h)
+            agents.append({
+                "agent_id": h.agent_id,
+                "id":       h.agent_id,   # alias expected by SomVisualizer
+                "som_r":    r,
+                "som_c":    c,
+                "som_row":  r,
+                "som_col":  c,
+                "alive":    self._handle_is_alive(h),
+            })
         return {
-            "som": self.som.snapshot(),
+            "som":     self.som.snapshot(),
             "emotion": self.emotion_reg.snapshot(),
             "memory":  self.memory_mgr.snapshot(),
+            "agents":  agents,
         }
 
     # ── Internal helpers ─────────────────────────────────────────────────────
