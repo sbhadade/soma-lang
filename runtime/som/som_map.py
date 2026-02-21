@@ -1,16 +1,15 @@
 """
-runtime/som/som_map.py — Phase 2: Live SOM topology
-=====================================================
+runtime/som/som_map.py — Phase 2 + 2.5: Live SOM topology
+==========================================================
 
 Thread-safe SOM map shared across all SOMA agents.
-Replaces the stub implementations in soma/vm.py and runtime/soma_runtime.py.
 
-Key improvements over existing code:
-  - RWLock: concurrent BMU reads, serialised TRAIN writes
-  - Activation tracking per node (used by SOM_WALK gradient)
-  - Hit count per node (used by SOM_ELECT)
-  - Gaussian neighbourhood (real Kohonen update)
-  - Decay: lr and sigma decay over epochs
+Phase 2  : BMU / TRAIN / WALK / ELECT — real Kohonen update, activation tracking
+Phase 2.5: DECAY_STEP / PRUNE_CHECK — weight erosion + synaptic pruning
+
+Paper: "A Path to AGI Part II: Liveliness"
+  w(t+1) = w(t) * (1 - decay_rate)  if node NOT activated this pulse
+  w(t+1) = w(t)                      if node WAS activated (protected by emotion)
 """
 from __future__ import annotations
 
@@ -30,6 +29,10 @@ class SomNode:
     weights: List[float] = field(default_factory=lambda: [random.random() for _ in range(VEC_DIM)])
     activation: float = 0.0    # last Gaussian influence received
     hit_count: int = 0         # times this node was BMU
+    # Phase 2.5 — decay fields
+    decay_rate:       float = 0.001   # per-pulse weight erosion rate
+    activated_this_pulse: bool = False  # set True by TRAIN, cleared by DECAY_STEP
+    emotion_protected: bool = False     # set by DECAY_PROTECT, blocks decay
 
 
 class LiveSomMap:
@@ -130,6 +133,7 @@ class LiveSomMap:
                         node.activation = influence
 
             self.nodes[bmu_r][bmu_c].hit_count += 1
+            self.nodes[bmu_r][bmu_c].activated_this_pulse = True  # Phase 2.5
             self.epoch += 1
 
     # ── WALK ────────────────────────────────────────────────────────────────
@@ -210,6 +214,85 @@ class LiveSomMap:
 
     def node_dist(self, r1: int, c1: int, r2: int, c2: int) -> float:
         return math.sqrt((r1 - r2) ** 2 + (c1 - c2) ** 2)
+
+    # ── Phase 2.5: DECAY_STEP ────────────────────────────────────────────────
+
+    def decay_step(self,
+                   protected_coords: Optional[List[Tuple[int,int]]] = None,
+                   base_rate: float = 0.001) -> int:
+        """
+        DECAY_STEP opcode — fires on every PULSE.
+
+        For every node NOT activated this pulse AND NOT emotion-protected:
+            w(t+1) = w(t) * (1 - decay_rate)
+
+        Activated nodes and emotion-protected nodes are shielded.
+        Returns number of nodes that were decayed.
+
+        Parameters
+        ----------
+        protected_coords : list of (r, c) that are emotion-protected
+                           (comes from EmotionRegistry).
+        base_rate : default decay rate if node.decay_rate not overridden.
+        """
+        protected_set = set(protected_coords) if protected_coords else set()
+        decayed = 0
+
+        with self._lock:
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    node = self.nodes[r][c]
+                    # Skip: activated this pulse, or emotion-protected
+                    if node.activated_this_pulse or (r, c) in protected_set:
+                        node.activated_this_pulse = False   # reset for next pulse
+                        continue
+                    rate = node.decay_rate if node.decay_rate > 0 else base_rate
+                    node.weights = [w * (1.0 - rate) for w in node.weights]
+                    node.activation *= (1.0 - rate * 0.5)  # activation fades too
+                    node.activated_this_pulse = False
+                    decayed += 1
+
+        return decayed
+
+    # ── Phase 2.5: PRUNE_CHECK ───────────────────────────────────────────────
+
+    def prune_check(self, threshold: float = 0.01) -> int:
+        """
+        PRUNE_CHECK opcode — zero out weights below `threshold` strength.
+
+        Synaptic pruning: if a node's L2 norm falls below threshold,
+        its weights are reset to zero. This frees the node for
+        new learning.
+
+        Returns number of nodes pruned.
+        """
+        pruned = 0
+        with self._lock:
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    node = self.nodes[r][c]
+                    strength = math.sqrt(sum(w*w for w in node.weights))
+                    if strength < threshold:
+                        node.weights   = [0.0] * self.dims
+                        node.activation = 0.0
+                        pruned += 1
+        return pruned
+
+    def mark_activated(self, r: int, c: int) -> None:
+        """
+        Called by TRAIN to mark a node as activated this pulse.
+        Prevents DECAY_STEP from eroding it.
+        """
+        with self._lock:
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                self.nodes[r][c].activated_this_pulse = True
+
+    def node_strength(self, r: int, c: int) -> float:
+        """L2 norm of node weights. Used by memory consolidation ranking."""
+        with self._lock:
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                return math.sqrt(sum(w*w for w in self.nodes[r][c].weights))
+        return 0.0
 
     # ── Snapshot ────────────────────────────────────────────────────────────
 
