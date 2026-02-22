@@ -1,172 +1,225 @@
-"""SOMA ISA v3.0 — Opcode table and register definitions.
+"""SOMA ISA v1.5 — Opcode table and register definitions.
 
-Opcode values here are the CANONICAL truth shared by:
-  - soma/assembler.py   (encodes .soma source → .sombin)
-  - soma/vm.py          (cooperative test VM — uses OPCODES dict, auto-heals)
-  - runtime/soma_runtime.py  (real pthreads runtime — _exec dispatch)
-  - runtime/soma_emit_c.py   (C transpiler — switch() cases)
-  - soma_runtime.h/.c        (C library — no opcodes, pure API)
-
-CHANGE LOG vs v1.0:
-  - WAIT      0x35 → 0x07  (moved to agent-lifecycle block)
-  - SOM_INIT  0x15 → 0x1C  (moved to SOM block)
-  - SOM_WALK  0x16 → 0x1D  (moved to SOM block)
-  - SOM_MAP   0x17 → 0x1A  (moved to SOM block)
-  - MOV       0x50 → 0x40  (moved to memory block)
-  - STORE     0x52 → 0x41
-  - LOAD      0x51 → 0x42
-  - ADD       0x40 → 0x50  (moved to arithmetic block)
-  - SUB       0x41 → 0x51
-  - MUL       0x42 → 0x52
-  - DIV       0x43 → 0x53
-  - CALL      0x33 → 0x35
-  - RET       0x34 → 0x36
-  - NOP       0x36 → 0x38
-  - CMP       0x56 → REMOVED (use JZ/JNZ/JEQ/JGT instead)
-  NEW in v3.0: SPAWN_MAP, SOM_SENSE, SOM_DIST, LR_DECAY,
-               JEQ, JGT, ACCUM, TRAP
+Phases:
+  I    (0x01–0x07)  Agent lifecycle
+  II   (0x11–0x1F)  SOM operations
+  III  (0x20–0x37)  Messaging + Control flow
+  IV   (0x40–0x72)  Arithmetic / Vector / Culture / Curiosity
+  V    (0x73–0x77)  Collective Intelligence  ← NEW
 """
 
 # ── Opcodes ────────────────────────────────────────────────────────────────────
-OPCODES = {
-    # ── Agent lifecycle ───────────────────────────────────────────────────────
-    "SPAWN":       0x01,   # Spawn agent at label
-    "AGENT_KILL":  0x02,   # Kill agent (SELF=0xFE, ALL=0xFF)
-    "FORK":        0x03,   # Spawn N copies at label
-    "MERGE":       0x04,   # Collect accumulated result
-    "BARRIER":     0x05,   # Synchronise N agents
-    "SPAWN_MAP":   0x06,   # Spawn N×M agents on SOM grid
-    "WAIT":        0x07,   # Wait for agent to die (was 0x35 in v1.0)
+OPCODES: dict[str, int] = {
+    # ── Phase I: Agent lifecycle ────────────────────────────────────────────
+    "SPAWN":          0x01,
+    "AGENT_KILL":     0x02,
+    "FORK":           0x03,
+    "MERGE":          0x04,
+    "BARRIER":        0x05,
+    "SPAWN_MAP":      0x06,
+    "WAIT":           0x07,
 
-    # ── SOM operations ────────────────────────────────────────────────────────
-    "SOM_BMU":     0x11,   # Find best matching unit
-    "SOM_TRAIN":   0x12,   # Kohonen weight update
-    "SOM_NBHD":    0x13,   # Compute Gaussian neighbourhood
-    "WGHT_UPD":    0x14,   # Weight update (alias for SOM_TRAIN)
-    # 0x15 reserved
-    # 0x16 reserved
-    # 0x17 reserved
-    # 0x18 reserved
-    "SOM_ELECT":   0x19,   # Democratic leader election
-    "SOM_MAP":     0x1A,   # Place agent at SOM coordinate (was 0x17)
-    "SOM_SENSE":   0x1B,   # Read activation at agent's current node
-    "SOM_INIT":    0x1C,   # Initialise SOM weights (was 0x15)
-    "SOM_WALK":    0x1D,   # Move agent along gradient (was 0x16)
-    "SOM_DIST":    0x1E,   # Topological distance between two agents
-    "LR_DECAY":    0x1F,   # Decay learning rate by factor imm/1000
+    # ── Phase II: SOM operations ────────────────────────────────────────────
+    "SOM_BMU":        0x11,
+    "SOM_TRAIN":      0x12,
+    "SOM_NBHD":       0x13,
+    "WGHT_UPD":       0x14,
+    "SOM_INIT":       0x15,
+    "SOM_WALK":       0x16,
+    "SOM_MAP":        0x17,
+    "SOM_ELECT":      0x19,
+    "SOM_SENSE":      0x1B,
+    "SOM_DIST":       0x1E,
+    "LR_DECAY":       0x1F,
 
-    # ── Messaging ─────────────────────────────────────────────────────────────
-    "MSG_SEND":    0x20,   # Send value to agent
-    "MSG_RECV":    0x21,   # Blocking receive into register
-    "BROADCAST":   0x23,   # Send to ALL agents
-    "ACCUM":       0x24,   # Atomic accumulate + add to register
+    # ── Phase III: Messaging ────────────────────────────────────────────────
+    "MSG_SEND":       0x20,
+    "MSG_RECV":       0x21,
+    "BROADCAST":      0x23,
+    "ACCUM":          0x24,
 
-    # ── Control flow ──────────────────────────────────────────────────────────
-    "JMP":         0x30,   # Unconditional jump
-    "JZ":          0x31,   # Jump if zero
-    "JNZ":         0x32,   # Jump if not zero
-    "JEQ":         0x33,   # Jump if reg[src] == reg[dst]
-    "JGT":         0x34,   # Jump if reg[src] > reg[dst]
-    "CALL":        0x35,   # Call subroutine (was 0x33 in v1.0)
-    "RET":         0x36,   # Return from subroutine (was 0x34)
-    "HALT":        0x37,   # Terminate program
-    "NOP":         0x38,   # No operation (was 0x36)
+    # ── Phase III: Control flow ─────────────────────────────────────────────
+    "JMP":            0x30,
+    "JZ":             0x31,
+    "JNZ":            0x32,
+    "JEQ":            0x33,
+    "JGT":            0x34,
+    "CALL":           0x35,
+    "RET":            0x36,
+    "NOP":            0x36,   # alias
+    "HALT":           0x37,
 
-    # ── Memory ────────────────────────────────────────────────────────────────
-    "MOV":         0x40,   # Move immediate/register (was 0x50 in v1.0)
-    "STORE":       0x41,   # Store register to data memory (was 0x52)
-    "LOAD":        0x42,   # Load from data memory (was 0x51)
-    "TRAP":        0x43,   # System trap / EOF stub
+    # ── Phase IV: Arithmetic / vector ───────────────────────────────────────
+    "ADD":            0x40,
+    "SUB":            0x41,
+    "MUL":            0x42,
+    "DIV":            0x43,
+    "MOV":            0x50,
+    "LOAD":           0x51,
+    "STORE":          0x52,
+    "DOT":            0x54,
+    "NORM":           0x55,
+    "CMP":            0x56,
 
-    # ── Arithmetic / vector ───────────────────────────────────────────────────
-    "ADD":         0x50,   # Vector add (was 0x40 in v1.0)
-    "SUB":         0x51,   # Vector subtract (was 0x41)
-    "MUL":         0x52,   # Vector multiply (was 0x42)
-    "DIV":         0x53,   # Vector divide (was 0x43)
-    "DOT":         0x54,   # Dot product
-    "NORM":        0x55,   # Normalize vector
-    "CMP":         0x56,   # Compare register to immediate (sets zero_flag)
+    # ── Phase IV: Culture / Curiosity (0x60–0x72) ───────────────────────────
+    "SOUL_SAVE":      0x60,   # persist agent's top-K weight vectors to soul store
+    "SOUL_LOAD":      0x61,   # restore soul into current agent's registers
+    "SOUL_MERGE":     0x62,   # blend two souls (parent + culture pool)
+    "CURIOSITY_SET":  0x63,   # write curiosity scalar into S-register
+    "CURIOSITY_GET":  0x64,   # read curiosity scalar
+    "EXPLORE":        0x65,   # stochastic SOM walk weighted by curiosity
+    "EXPLOIT":        0x66,   # greedy BMU descent
+    "CULTURE_WRITE":  0x68,   # write pattern to shared culture buffer
+    "CULTURE_READ":   0x69,   # read pattern from shared culture buffer
+    "CULTURE_BLEND":  0x6A,   # average incoming culture patterns
+    "NOVELTY":        0x6B,   # emit novelty score vs. culture buffer
+    "CDBG_LOG":       0x70,   # curiosity-debug: log agent state to trace
+    "CDBG_ASSERT":    0x71,   # halt with diagnostic if condition fails
+    "CDBG_PROBE":     0x72,   # sample SOM activation density
 
-    # ── Phase II: Emotional memory (liveliness) ──────────────────────────────
-    "EMOT_TAG":    0x80,   # Attach valence+intensity to current SOM node
-    "DECAY_PROTECT": 0x81, # Shield node from weight decay (cycles / permanent)
-    "PREDICT_ERR": 0x82,   # Compute prediction error (surprise signal)
-    "EMOT_RECALL": 0x83,   # Retrieve emotional tag at coord → reg
-    "SURPRISE_CALC": 0x84, # Surprise from two raw vectors
-
-    # ── Phase III: Curiosity (AgentSoul + SomTerrain) ─────────────────────────
-    "GOAL_SET":    0x60,   # Set goal vector (target weight-space state)
-    "GOAL_CHECK":  0x61,   # Measure distance to goal; updates stall/curiosity
-    "SOUL_QUERY":  0x62,   # Query content memory for fingerprint match
-    "META_SPAWN":  0x63,   # Spawn N agents with mutated goal vectors
-    "EVOLVE":      0x64,   # Select best child by goal proximity; inherit soul
-    "INTROSPECT":  0x65,   # Export own soul state as readable data
-    "TERRAIN_READ":0x66,   # Read collective terrain memory at (r, c)
-    "TERRAIN_MARK":0x67,   # Write emotional data into terrain at (r, c)
-    "SOUL_INHERIT":0x68,   # Explicit soul inheritance (agent_id → this agent)
-    "GOAL_STALL":  0x69,   # Jump to label if goal is stalled (curiosity trigger)
-
-    # ── Phase IV: CDBG — Context-Discriminated Binary Grammar ────────────────
-    "CDBG_EMIT":   0x70,   # Emit one CDBG frame to the message bus
-    "CDBG_RECV":   0x71,   # Receive and decode a CDBG frame from inbox
-    "CTX_SWITCH":  0x72,   # Set active decode context (CTX nibble)
+    # ── Phase V: Collective Intelligence (0x73–0x77) ── NEW ─────────────────
+    "NICHE_DECLARE":  0x73,   # agent broadcasts specialisation vector
+    "SYMBOL_EMERGE":  0x74,   # co-activation binds a symbol ID to SOM region
+    "HERITAGE_LOAD":  0x75,   # load parent soul top-K on birth
+    "NICHE_QUERY":    0x76,   # returns niche density; migrate if > threshold
+    "COLLECTIVE_SYNC":0x77,   # map-wide memory consolidation across all agents
 }
 
-OPCODE_NAMES = {v: k for k, v in OPCODES.items()}
+# Reverse lookup: opcode int → mnemonic string
+OPCODE_NAMES: dict[int, str] = {}
+for _k, _v in OPCODES.items():
+    if _v not in OPCODE_NAMES:           # first definition wins (NOP/RET alias)
+        OPCODE_NAMES[_v] = _k
+
+# ── Phase membership ───────────────────────────────────────────────────────────
+PHASE_RANGES: dict[str, tuple[int, int]] = {
+    "I":   (0x01, 0x0F),
+    "II":  (0x10, 0x1F),
+    "III": (0x20, 0x3F),
+    "IV":  (0x40, 0x72),
+    "V":   (0x73, 0x7F),
+}
+
+
+def opcode_phase(op: int) -> str:
+    for name, (lo, hi) in PHASE_RANGES.items():
+        if lo <= op <= hi:
+            return name
+    return "?"
+
 
 # ── Register encoding ──────────────────────────────────────────────────────────
-# R0-R15  → 0x0000-0x000F  (256-bit / 8×f32 weight vectors)
+# R0-R15  → 0x0000-0x000F  (256-bit general purpose / weight vectors)
 # A0-A63  → 0x0100-0x013F  (64-bit agent handles)
-# S0-S15  → 0x0200-0x020F  (64-bit SOM state: S0=lr, S1=sigma, S2=epoch)
-# SELF    → 0xFE00
-# PARENT  → 0xFF00
-# ALL     → 0xFE01
+# S0-S15  → 0x0200-0x020F  (SOM state scalars)
+# N0-N63  → 0x0300-0x033F  (niche registers — Phase V)
+# SELF    → 0xFF00
+# PARENT  → 0xFF01
+# ALL     → 0xFF02
 
-SPECIAL_REGS = {"SELF": 0xFF00, "PARENT": 0xFF01, "ALL": 0xFF02}
+SPECIAL_REGS: dict[str, int] = {
+    "SELF":   0xFF00,
+    "PARENT": 0xFF01,
+    "ALL":    0xFF02,
+}
 
 
 def encode_reg(name: str) -> int:
     if name in SPECIAL_REGS:
         return SPECIAL_REGS[name]
-    if name.startswith("R") and name[1:].isdigit():
-        n = int(name[1:])
-        if 0 <= n <= 15:
-            return 0x0000 | n
-    if name.startswith("A") and name[1:].isdigit():
-        n = int(name[1:])
-        if 0 <= n <= 63:
-            return 0x0100 | n
-    if name.startswith("S") and name[1:].isdigit():
-        n = int(name[1:])
-        if 0 <= n <= 15:
-            return 0x0200 | n
-    raise ValueError(f"Unknown register: {name}")
+    prefix, tail = name[0], name[1:]
+    if not tail.isdigit():
+        raise ValueError(f"Unknown register: {name!r}")
+    n = int(tail)
+    mapping = {"R": (0x0000, 15), "A": (0x0100, 63),
+               "S": (0x0200, 15), "N": (0x0300, 63)}
+    if prefix not in mapping:
+        raise ValueError(f"Unknown register prefix: {prefix!r}")
+    base, cap = mapping[prefix]
+    if not 0 <= n <= cap:
+        raise ValueError(f"Register index {n} out of range for {prefix} (0–{cap})")
+    return base | n
 
 
 def decode_reg(code: int) -> str:
-    if code in (0xFF00, 0xFF01, 0xFF02):
-        return {0xFF00: "SELF", 0xFF01: "PARENT", 0xFF02: "ALL"}[code]
-    hi = (code >> 8) & 0xFF
-    lo = code & 0xFF
-    if hi == 0x00:
-        return f"R{lo}"
-    if hi == 0x01:
-        return f"A{lo}"
-    if hi == 0x02:
-        return f"S{lo}"
-    return f"#{code:#06x}"
+    rev = {v: k for k, v in SPECIAL_REGS.items()}
+    if code in rev:
+        return rev[code]
+    hi, lo = (code >> 8) & 0xFF, code & 0xFF
+    return {0x00: "R", 0x01: "A", 0x02: "S", 0x03: "N"}.get(hi, "#") + (
+        f"{lo}" if hi in (0x00, 0x01, 0x02, 0x03) else f"{code:#06x}"
+    )
 
 
 # ── Binary format constants ────────────────────────────────────────────────────
-MAGIC = b"SOMA"   # 0x534F4D41
-VER_MAJOR = 4
-VER_MINOR = 0
+MAGIC     = b"SOMA"
+VER_MAJOR = 1
+VER_MINOR = 5          # bumped for Phase V
+HEADER_SIZE = 32
 
 ARCH_ANY   = 0
 ARCH_X86   = 1
 ARCH_ARM   = 2
 ARCH_RISCV = 3
 ARCH_WASM  = 4
+ARCH_NAMES = {ARCH_ANY: "ANY", ARCH_X86: "X86",
+              ARCH_ARM: "ARM64", ARCH_RISCV: "RISCV", ARCH_WASM: "WASM"}
 
-ARCH_NAMES = {ARCH_ANY: "ANY", ARCH_X86: "X86", ARCH_ARM: "ARM64",
-              ARCH_RISCV: "RISCV", ARCH_WASM: "WASM"}
+# ── Instruction word layout (64-bit, big-endian) ───────────────────────────────
+# [63:56] opcode   8 bits
+# [55:48] agent_id 8 bits
+# [47:40] som_x    8 bits
+# [39:32] som_y    8 bits
+# [31:16] reg      16 bits
+# [15:0]  imm      16 bits
+
+WORD_SIZE = 8  # bytes
+
+
+def encode_word(opcode: int, agent_id: int = 0, som_x: int = 0,
+                som_y: int = 0, reg: int = 0, imm: int = 0) -> int:
+    return (
+        ((opcode   & 0xFF) << 56) |
+        ((agent_id & 0xFF) << 48) |
+        ((som_x    & 0xFF) << 40) |
+        ((som_y    & 0xFF) << 32) |
+        ((reg      & 0xFFFF) << 16) |
+        (imm       & 0xFFFF)
+    )
+
+
+def decode_word(word: int) -> dict:
+    return {
+        "opcode":   (word >> 56) & 0xFF,
+        "agent_id": (word >> 48) & 0xFF,
+        "som_x":    (word >> 40) & 0xFF,
+        "som_y":    (word >> 32) & 0xFF,
+        "reg":      (word >> 16) & 0xFFFF,
+        "imm":       word        & 0xFFFF,
+    }
+
+
+# ── Phase V semantic constants ─────────────────────────────────────────────────
+#   These are embedded as immediates (imm field) in Phase V instructions.
+
+NICHE_CAPACITY      = 64        # max distinct niches (log2 = 6.0)
+NICHE_MIGRATE_THRESH = 0.75     # migrate if niche density > 75 %
+SYMBOL_BIND_THRESH  = 3         # co-activations needed to bind a symbol
+HERITAGE_TOP_K      = 8         # soul vectors copied to child on birth
+COLLECTIVE_WINDOW   = 256       # pulses between automatic COLLECTIVE_SYNC
+
+# Immediates for NICHE_DECLARE
+NICHE_IMM_DECLARE   = 0x0001
+NICHE_IMM_WITHDRAW  = 0x0002
+
+# ── Congruency manifest ────────────────────────────────────────────────────────
+#   Every file that deals with opcodes registers itself here.
+#   verify_congruency.py checks that each file's opcode set
+#   is a subset of OPCODES (no phantoms) and that Phase V is fully covered.
+
+CONGRUENCY_MANIFEST = [
+    "soma/isa.py",
+    "runtime/bridge.py",
+    "runtime/collective.py",
+    "runtime/interpreter.py",
+]

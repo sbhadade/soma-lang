@@ -41,7 +41,6 @@ examples/*.sombin
 hello.c
 hello
 *.sombin
-*.c
 swarm_cluster
 online_learner
 hello_agent.c

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soma-lang"
-version = "3.0.0"
+version = "5.0.0"
 description = "SOMA — Self-Organizing Multi-Agent Binary Language"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -40,7 +40,7 @@ Issues     = "https://github.com/sbhadade/soma-lang/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["runtime*", "bootstrap*"]
+include = ["soma*", "runtime*", "bootstrap*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.soma", "*.spec", "*.grammar"]

@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
-"""SOMA Runtime v3.0 — complete vector registers, real SOM_WALK, SPAWN_MAP grid"""
+"""SOMA Runtime v4.1 — complete vector registers, real SOM_WALK, SPAWN_MAP grid,
+Phase II/III/IV: emotional memory, curiosity (AgentSoul+SomTerrain), CDBG"""
 import sys,struct,math,threading,random
 from collections import defaultdict
 from runtime.agent import AgentRegistry, AgentState, ThreadAgent
 from runtime.agent.thread_agent import spawn_agent as _spawn_agent
+
+# ── Phase II/III/IV runtime modules ──────────────────────────────────────────
+try:
+    from runtime.som.soul import AgentSoul, SoulRegistry
+    from runtime.som.terrain import SomTerrain
+    from soma.cdbg import Encoder, Frame, StreamDecoder, CTX
+    _PHASE_IV_AVAILABLE = True
+except ImportError:
+    _PHASE_IV_AVAILABLE = False
+
+# Global soul registry and terrain (shared across all agents in one run)
+_soul_registry  = SoulRegistry() if _PHASE_IV_AVAILABLE else None
+_terrain        = None   # initialised lazily from SomaRuntime (needs rows/cols)
 
 HEADER_SIZE=32; MEM_FLAG=0x80000000; VEC_DIM=8; MAX_CALL=1024
 DTYPE_NAME={0:'INT',1:'FLOAT',2:'VEC',3:'WGHT',4:'COORD',5:'BYTES'}
@@ -320,6 +334,104 @@ class Agent:
         elif op==0x54:
             d=self.rg(dst).dot(self.rg(src)); v=VecReg(); v.v[0]=d; self.R[dst]=v
         elif op==0x55: self.R[dst]=self.rg(dst).normalized()
+
+        # ── Phase II: Emotional memory ────────────────────────────────────
+        elif op==0x80:  # EMOT_TAG reg, imm_intensity
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                r,c  = self.bmu_pos
+                soul.tag_memory(self.rg(dst).v, valence=self.rg(dst).v[0],
+                                intensity=max(0.0,min(1.0,imm/32767.0)))
+            if _terrain:
+                _terrain.mark(self.bmu_pos[0], self.bmu_pos[1],
+                              pulse=0, valence=self.rg(dst).v[0],
+                              intensity=max(0.0,min(1.0,imm/32767.0)))
+        elif op==0x81:  # DECAY_PROTECT — handled by emotion.py; no-op here
+            pass
+        elif op==0x82:  # PREDICT_ERR → reg
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                dist,_ = soul.goal_check(self.rg(src).v)
+                v=VecReg(); v.v[0]=dist; self.R[dst]=v
+        elif op==0x83:  # EMOT_RECALL → reg
+            if _terrain:
+                info = _terrain.read(self.bmu_pos[0], self.bmu_pos[1])
+                v=VecReg(); v.v[0]=info.get('cultural_deposit',0.0); self.R[dst]=v
+        elif op==0x84:  # SURPRISE_CALC → reg
+            d=self.rg(dst).distance(self.rg(src))
+            v=VecReg(); v.v[0]=min(d/math.sqrt(VEC_DIM),1.0); self.R[dst]=v
+
+        # ── Phase III: Curiosity ──────────────────────────────────────────
+        elif op==0x60:  # GOAL_SET reg
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                soul.goal_set(self.rg(dst).v)
+        elif op==0x61:  # GOAL_CHECK reg → distance written back
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                dist,curious = soul.goal_check(self.rg(dst).v)
+                v=VecReg(); v.v[0]=dist*65535.0; self.R[dst]=v
+        elif op==0x62:  # SOUL_QUERY reg → similarity
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                hit  = soul.soul_query(self.rg(dst).v)
+                v=VecReg()
+                v.v[0] = hit.intensity if hit else 0.0
+                self.R[dst]=v
+        elif op==0x63:  # META_SPAWN count, entry
+            # ag field = count, imm = entry label offset
+            count = ag if ag else 4
+            entry = imm
+            for i in range(count):
+                nid = rt.shared.get(self.agent_id) and self.agent_id*10+i or i+100
+                rt._spawn(nid, entry+HEADER_SIZE, self.agent_id)
+        elif op==0x64:  # EVOLVE → winner agent id
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                winner = _soul_registry.evolve(self.agent_id)
+                v=VecReg(); v.v[0]=float(winner or 0); self.R[dst]=v
+        elif op==0x65:  # INTROSPECT — emit soul snapshot
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                snap = soul.introspect()
+                print(f"[INTROSPECT] agent={self.agent_id} "
+                      f"curiosity={snap.get('curiosity_drive',0):.4f} "
+                      f"stall={snap.get('stall_count',0)} "
+                      f"memories={snap.get('memory_count',0)}")
+        elif op==0x66:  # TERRAIN_READ → reg
+            if _terrain:
+                info = _terrain.read(self.bmu_pos[0], self.bmu_pos[1])
+                v=VecReg()
+                v.v[0] = 1.0 if info.get('is_virgin') else info.get('cultural_deposit',0.0)
+                self.R[dst]=v
+            else:
+                v=VecReg(); v.v[0]=1.0; self.R[dst]=v  # virgin by default
+        elif op==0x67:  # TERRAIN_MARK reg
+            if _terrain:
+                _terrain.mark(self.bmu_pos[0], self.bmu_pos[1],
+                              pulse=0, valence=self.rg(dst).v[0], intensity=0.8)
+        elif op==0x68:  # SOUL_INHERIT src_agent → this agent
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                _soul_registry.inherit(self.agent_id, ag)
+        elif op==0x69:  # GOAL_STALL @label
+            if _PHASE_IV_AVAILABLE and _soul_registry:
+                soul = _soul_registry.get_or_create(self.agent_id)
+                if soul.curiosity_drive > 0:
+                    tp = imm - HEADER_SIZE
+                    if 0 <= tp <= len(rt.code)-8: self.pc=tp; j=True
+
+        # ── Phase IV: CDBG ────────────────────────────────────────────────
+        elif op==0x70:  # CDBG_EMIT
+            if _PHASE_IV_AVAILABLE:
+                wire  = Encoder.agent(self.agent_id).encode()
+                frame = Frame.decode(wire)
+                parsed = frame.parsed()
+                print(f"[CDBG_EMIT] agent={self.agent_id} "
+                      f"frame={wire.hex()} parsed={parsed}")
+        elif op==0x71:  # CDBG_RECV → reg
+            v=VecReg(); v.v[0]=0.0; self.R[dst]=v   # bus not wired yet
+        elif op==0x72:  # CTX_SWITCH imm=ctx_nibble
+            pass   # ctx state stored in soul when needed
+
         return j
 
     def _lvec(self,reg):
@@ -349,6 +461,16 @@ class SomaRuntime:
         0x35:'CALL',0x36:'RET',0x37:'HALT',0x38:'NOP',
         0x40:'MOV',0x41:'STORE',0x42:'LOAD',0x43:'TRAP',
         0x50:'ADD',0x51:'SUB',0x52:'MUL',0x53:'DIV',0x54:'DOT',0x55:'NORM',
+        # Phase II — Emotional memory
+        0x80:'EMOT_TAG',0x81:'DECAY_PROTECT',0x82:'PREDICT_ERR',
+        0x83:'EMOT_RECALL',0x84:'SURPRISE_CALC',
+        # Phase III — Curiosity
+        0x60:'GOAL_SET',0x61:'GOAL_CHECK',0x62:'SOUL_QUERY',
+        0x63:'META_SPAWN',0x64:'EVOLVE',0x65:'INTROSPECT',
+        0x66:'TERRAIN_READ',0x67:'TERRAIN_MARK',
+        0x68:'SOUL_INHERIT',0x69:'GOAL_STALL',
+        # Phase IV — CDBG
+        0x70:'CDBG_EMIT',0x71:'CDBG_RECV',0x72:'CTX_SWITCH',
     }
     def __init__(self,path,verbose=True):
         self.verbose=verbose
@@ -366,6 +488,10 @@ class SomaRuntime:
         self.mem=DataMemory(self.data_bytes)
         self.som=SOM(self.som_rows,self.som_cols)
         self.shared=Shared(); self.jit=JIT(); self._threads=[]
+        # ── Phase III: initialise shared terrain ─────────────────────────
+        global _terrain
+        if _PHASE_IV_AVAILABLE and _terrain is None:
+            _terrain = SomTerrain(self.som_rows, self.som_cols)
         if verbose:
             print(f"[SOMA] {path}  SOM {self.som_rows}×{self.som_cols}  "
                   f"{len(self.code)//8} instructions")
@@ -430,7 +556,7 @@ def run_cli():
 
     # Call your existing interpreter (just paste your current top-level code here
     # or extract it into a run_file(binary_path, quiet) function)
-    print(f"🚀 SOMA v3.0 running {binary_path} (quiet={quiet})")
+    print(f"🚀 SOMA v4.1 running {binary_path} (quiet={quiet})")
     # ... your runtime code ...
 
 if __name__ == "__main__":
