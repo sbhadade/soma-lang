@@ -41,10 +41,9 @@ examples/*.sombin
 hello.c
 hello
 *.sombin
-*.c
 swarm_cluster
 online_learner
 hello_agent.c
 swarm_cluster.c
 online_learner.c
-.c
+bin/*.c
