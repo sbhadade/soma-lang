@@ -31,6 +31,16 @@ OPNAME = {
     0x38:'NOP',      0x40:'MOV',       0x41:'STORE',   0x42:'LOAD',
     0x43:'TRAP',     0x50:'ADD',       0x51:'SUB',     0x52:'MUL',
     0x53:'DIV',      0x54:'DOT',       0x55:'NORM',
+    # Phase II
+    0x80:'EMOT_TAG', 0x81:'DECAY_PROTECT', 0x82:'PREDICT_ERR',
+    0x83:'EMOT_RECALL', 0x84:'SURPRISE_CALC',
+    # Phase III
+    0x60:'GOAL_SET', 0x61:'GOAL_CHECK', 0x62:'SOUL_QUERY',
+    0x63:'META_SPAWN', 0x64:'EVOLVE',   0x65:'INTROSPECT',
+    0x66:'TERRAIN_READ', 0x67:'TERRAIN_MARK',
+    0x68:'SOUL_INHERIT', 0x69:'GOAL_STALL',
+    # Phase IV
+    0x70:'CDBG_EMIT', 0x71:'CDBG_RECV', 0x72:'CTX_SWITCH',
 }
 
 def die(m): print(f"emit-c: {m}", file=sys.stderr); sys.exit(1)
@@ -418,6 +428,33 @@ def emit(path):
     w('    case 0x55: /* NORM */')
     w('      { float n=0; for(int k=0;k<VEC_DIM;k++) n+=a->R[dst][k]*a->R[dst][k];')
     w('        n=sqrtf(n); if(n>1e-9f) for(int k=0;k<VEC_DIM;k++) a->R[dst][k]/=n; } break;')
+
+    # ── Phase II: Emotional memory stubs ────────────────────────────────────
+    w('    /* ── Phase II: Emotional memory (runtime bridge) ── */')
+    w('    case 0x80: /* EMOT_TAG     */ soma_emot_tag(a->id, a->bmu_r, a->bmu_c, a->R[dst][0], (float)imm/32767.0f); break;')
+    w('    case 0x81: /* DECAY_PROTECT*/ soma_decay_protect(a->id, a->bmu_r, a->bmu_c, imm); break;')
+    w('    case 0x82: /* PREDICT_ERR  */ a->R[dst][0]=soma_predict_err(a->id, a->R[src]); break;')
+    w('    case 0x83: /* EMOT_RECALL  */ a->R[dst][0]=soma_emot_recall(a->id, a->bmu_r, a->bmu_c); break;')
+    w('    case 0x84: /* SURPRISE_CALC*/ a->R[dst][0]=soma_surprise_calc(a->R[dst],a->R[src]); break;')
+
+    # ── Phase III: Curiosity stubs ───────────────────────────────────────────
+    w('    /* ── Phase III: Curiosity (AgentSoul + SomTerrain) ── */')
+    w('    case 0x60: /* GOAL_SET     */ soma_goal_set(a->id, a->R[dst]); break;')
+    w('    case 0x61: /* GOAL_CHECK   */ a->R[dst][0]=soma_goal_check(a->id, a->R[dst]); break;')
+    w('    case 0x62: /* SOUL_QUERY   */ a->R[dst][0]=soma_soul_query(a->id, a->R[dst]); break;')
+    w('    case 0x63: /* META_SPAWN   */ soma_meta_spawn(a->id, ag, imm); break;')
+    w('    case 0x64: /* EVOLVE       */ a->R[dst][0]=soma_evolve(a->id, ag); break;')
+    w('    case 0x65: /* INTROSPECT   */ soma_introspect(a->id); break;')
+    w('    case 0x66: /* TERRAIN_READ */ a->R[dst][0]=soma_terrain_read(a->bmu_r,a->bmu_c); break;')
+    w('    case 0x67: /* TERRAIN_MARK */ soma_terrain_mark(a->bmu_r,a->bmu_c,a->R[dst][0]); break;')
+    w('    case 0x68: /* SOUL_INHERIT */ soma_soul_inherit(a->id, ag); break;')
+    w('    case 0x69: /* GOAL_STALL   */ if(soma_goal_stalled(a->id)){ a->pc=imm; jumped=1; } break;')
+
+    # ── Phase IV: CDBG stubs ─────────────────────────────────────────────────
+    w('    /* ── Phase IV: CDBG frames ── */')
+    w('    case 0x70: /* CDBG_EMIT    */ soma_cdbg_emit(a->id); break;')
+    w('    case 0x71: /* CDBG_RECV    */ a->R[dst][0]=soma_cdbg_recv(a->id); break;')
+    w('    case 0x72: /* CTX_SWITCH   */ soma_ctx_switch(a->id, imm & 0xF); break;')
 
     w('    default: break;')
     w('    } /* switch */')

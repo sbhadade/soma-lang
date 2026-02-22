@@ -87,6 +87,13 @@ OPCODES = {
     "NORM":        0x55,   # Normalize vector
     "CMP":         0x56,   # Compare register to immediate (sets zero_flag)
 
+    # ── Phase II: Emotional memory (liveliness) ──────────────────────────────
+    "EMOT_TAG":    0x80,   # Attach valence+intensity to current SOM node
+    "DECAY_PROTECT": 0x81, # Shield node from weight decay (cycles / permanent)
+    "PREDICT_ERR": 0x82,   # Compute prediction error (surprise signal)
+    "EMOT_RECALL": 0x83,   # Retrieve emotional tag at coord → reg
+    "SURPRISE_CALC": 0x84, # Surprise from two raw vectors
+
     # ── Phase III: Curiosity (AgentSoul + SomTerrain) ─────────────────────────
     "GOAL_SET":    0x60,   # Set goal vector (target weight-space state)
     "GOAL_CHECK":  0x61,   # Measure distance to goal; updates stall/curiosity
@@ -152,7 +159,7 @@ def decode_reg(code: int) -> str:
 
 # ── Binary format constants ────────────────────────────────────────────────────
 MAGIC = b"SOMA"   # 0x534F4D41
-VER_MAJOR = 3
+VER_MAJOR = 4
 VER_MINOR = 0
 
 ARCH_ANY   = 0

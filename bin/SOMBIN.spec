@@ -205,3 +205,73 @@
 ;;;  ── CODE (2 × 8 bytes = 16 bytes) ──
 ;;;  00000020: 01 00 00 00 0010 0008  ← SPAWN A0, @worker (coord 0,0, entry 0x0008)
 ;;;  00000028: 37 00 00 00 0000 0000  ← HALT
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; PHASE II: EMOTIONAL MEMORY OPCODES (v2.0+)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;;
+;;;  0x80   EMOT_TAG      RREG, imm16       Tag current SOM node (valence=reg, intensity=imm)
+;;;  0x81   DECAY_PROTECT RREG, imm16       Protect node: imm=0 permanent, else N cycles
+;;;  0x82   PREDICT_ERR   RREG, RREG        Surprise = dist(actual, predicted) → RREG
+;;;  0x83   EMOT_RECALL   RREG, coord       Retrieve emotional tag at coord → RREG
+;;;  0x84   SURPRISE_CALC RREG, RREG, RREG  Surprise from two raw vectors → RREG
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; PHASE III: CURIOSITY OPCODES (v4.0)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;;
+;;;  0x60   GOAL_SET      RREG              Load goal vector from RREG into AgentSoul
+;;;  0x61   GOAL_CHECK    RREG              goal_dist → RREG; stall_count++; sets STALL flag
+;;;  0x62   SOUL_QUERY    RREG              Content-match RREG vs soul memory → RREG (intuition)
+;;;  0x63   META_SPAWN    imm8, @label      Spawn imm8 agents with mutated goal vectors
+;;;  0x64   EVOLVE        AREG              Select child closest to goal → AREG; inherit soul
+;;;  0x65   INTROSPECT                      Emit soul snapshot to message bus (no operands)
+;;;  0x66   TERRAIN_READ  RREG              Read collective terrain at agent pos → RREG
+;;;  0x67   TERRAIN_MARK  RREG             Write RREG emotional state into terrain
+;;;  0x68   SOUL_INHERIT  AREG              Copy soul from AREG agent into this agent
+;;;  0x69   GOAL_STALL    @label            Jump to label if stall_count > STALL_THRESH (20)
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; PHASE IV: CDBG OPCODES (v4.0)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;;
+;;;  0x70   CDBG_EMIT                       Emit 5-byte CDBG frame (agent identity) to bus
+;;;  0x71   CDBG_RECV     RREG              Decode incoming CDBG frame → RREG (parsed dict)
+;;;  0x72   CTX_SWITCH    imm4              Set active CTX nibble (0–6)
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; SECTION 8: CDBG — 5-BYTE BINARY FRAME FORMAT (v4.0)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;;
+;;;  The CDBG frame coexists with the 64-bit instruction word on the message
+;;;  bus. It is NOT an instruction — it is a compact identity/telemetry packet
+;;;  emitted by CDBG_EMIT and received by CDBG_RECV.
+;;;
+;;;  5-byte frame layout:
+;;;
+;;;  Byte 0:   [CTX:4][SUB:4]      — context nibble + sub-type nibble
+;;;  Byte 1–3: PAYLOAD[24]         — 3-byte payload (meaning depends on CTX)
+;;;  Byte 4:   [CHK:4][RSV:4]      — CRC-4 checksum + reserved nibble
+;;;
+;;;  CTX nibble values and payload interpretation:
+;;;
+;;;  CTX  Namespace   Payload meaning
+;;;  ───  ─────────   ──────────────────────────────────────────────────────
+;;;  0x0  SOM_MAP     X[8] · Y[8] · OPCODE[8]        coordinate + instruction
+;;;  0x1  AGENT       cluster[4] · map_id[8] · seq[12]  agent identity (16.7M IDs)
+;;;  0x2  SOUL        field_id[8] · fp16_value[16]    one soul field in float16
+;;;  0x3  MEMORY      hash_prefix[24]                 content-address bucket ptr
+;;;  0x4  PULSE       counter[24]                     heartbeat / tick counter
+;;;  0x5  EMOTION     row[8] · valence[8] · intensity[8]  emotional tag packet
+;;;  0x6  HISTORY     generation[8] · goal_record_id[16]  lifecycle event
+;;;
+;;;  CRC-4 polynomial: x^4 + x + 1  (nibble-wise, Hamming distance ≥ 4)
+;;;
+;;;  Frame framing on wire:
+;;;    — No framing header needed when used on SOMA message bus (fixed 5 bytes)
+;;;    — For raw TCP/serial streams: prepend 0xA5 sync byte (6 bytes total)
+;;;
+;;;  StreamDecoder state machine:
+;;;    IDLE → byte[0]    validate CTX nibble (0–6 valid)
+;;;    byte[0] → bytes[1-3]  accumulate payload
+;;;    bytes[1-3] → byte[4]  validate CRC-4; emit Frame or raise FrameError

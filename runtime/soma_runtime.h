@@ -167,3 +167,27 @@ void soma_vec_print(const char *label, soma_vec_t v);
 void soma_som_print_activations(soma_vm_t *vm);
 
 #endif /* SOMA_RUNTIME_H */
+
+/* ── Phase II: Emotional memory bridge (implemented in soma_runtime.py) ── */
+void  soma_emot_tag(int agent_id, int r, int c, float valence, float intensity);
+void  soma_decay_protect(int agent_id, int r, int c, int cycles);
+float soma_predict_err(int agent_id, float *input);
+float soma_emot_recall(int agent_id, int r, int c);
+float soma_surprise_calc(float *a, float *b);
+
+/* ── Phase III: Curiosity bridge (AgentSoul + SomTerrain) ── */
+void  soma_goal_set(int agent_id, float *goal_vec);
+float soma_goal_check(int agent_id, float *current_vec);
+float soma_soul_query(int agent_id, float *vec);
+void  soma_meta_spawn(int agent_id, int count, int entry_pc);
+float soma_evolve(int agent_id, int winner_slot);
+void  soma_introspect(int agent_id);
+float soma_terrain_read(int r, int c);
+void  soma_terrain_mark(int r, int c, float valence);
+void  soma_soul_inherit(int dst_agent, int src_agent);
+int   soma_goal_stalled(int agent_id);   /* returns 1 if stall_count > threshold */
+
+/* ── Phase IV: CDBG bridge ── */
+void  soma_cdbg_emit(int agent_id);
+float soma_cdbg_recv(int agent_id);
+void  soma_ctx_switch(int agent_id, int ctx_nibble);

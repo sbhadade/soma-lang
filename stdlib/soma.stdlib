@@ -175,3 +175,122 @@ rpc_done     : BOOL = false
   BROADCAST R0
   BARRIER   R1                ;;; wait for N agents
   RET
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; PHASE III: CURIOSITY / SOUL ROUTINES (v4.0)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.EXPORT  soul_init
+.EXPORT  soul_learn_loop
+.EXPORT  soul_on_stall
+.EXPORT  terrain_explore
+.EXPORT  terrain_deposit_and_die
+
+;;; ─────────────────────────────────────────────────
+;;; soul_init — set goal and read terrain before main loop
+;;; Args:    R0 = goal vector (from MSG_RECV), A0 = parent
+;;; Outputs: goal set in soul, R1 = terrain info
+;;; ─────────────────────────────────────────────────
+@soul_init:
+  TERRAIN_READ  R1              ;;; read collective wisdom at current position
+  GOAL_SET      R0              ;;; encode intended future state
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; soul_learn_loop — one iteration of curiosity-aware learning
+;;; Args:    R0 = current input vector, S0 = learning rate
+;;; Outputs: R1 = goal distance; jumps to @soul_stall_handler if stalled
+;;; Clobbers: R2
+;;; ─────────────────────────────────────────────────
+@soul_learn_loop:
+  SOM_BMU       R0              ;;; find best matching unit
+  SOM_TRAIN     R0, S0          ;;; train map toward input
+  LR_DECAY      0x002           ;;; decay lr by 0.2% per iteration
+  EMOT_TAG      S0, 0x3FFF      ;;; mild positive tag at current node
+  TERRAIN_MARK  R0              ;;; update terrain with emotional state
+  GOAL_CHECK    R1              ;;; distance to goal → R1
+  GOAL_STALL    @soul_stall_handler  ;;; jump if stall_count > threshold
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; soul_on_stall — standard curiosity response to stalled goal
+;;; Args:    A0 = winner agent handle slot, R0 = goal_template
+;;; Side effects: spawns 4 candidates, selects winner, transfers soul
+;;; ─────────────────────────────────────────────────
+@soul_on_stall:
+  INTROSPECT                    ;;; know thyself before acting
+  META_SPAWN    4, @_candidate  ;;; spawn 4 mutated-goal candidates
+  BARRIER       4               ;;; wait for all candidates to complete
+  EVOLVE        A0              ;;; select winner by goal proximity
+  SOUL_INHERIT  A0              ;;; winner inherits this agent's memory
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; soul_stall_handler — placeholder label (user must define)
+;;; User programs should define @soul_stall_handler or call soul_on_stall
+;;; ─────────────────────────────────────────────────
+;;; (no code — label only, user overrides)
+
+;;; ─────────────────────────────────────────────────
+;;; terrain_explore — navigate toward most curious (virgin) node
+;;; Args:    none
+;;; Outputs: agent moved to most-curious SOM coordinate
+;;; ─────────────────────────────────────────────────
+@terrain_explore:
+  TERRAIN_READ  R2              ;;; read current node terrain score
+  JNZ           R2, @te_walk   ;;; if already visited, walk
+  MOV           R3, 0x7FFF     ;;; discovery valence = +1.0
+  TERRAIN_MARK  R3             ;;; mark as positively visited
+  RET
+@te_walk:
+  SOM_WALK      SELF, GRADIENT  ;;; move toward high-activation neighbor
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; terrain_deposit_and_die — dying agent leaves soul in terrain
+;;; Args:    none (uses current agent state)
+;;; Side effects: marks terrain, emits CDBG frame, kills self
+;;; ─────────────────────────────────────────────────
+@terrain_deposit_and_die:
+  SOUL_QUERY    R3              ;;; query own soul vs current weight pattern
+  TERRAIN_MARK  R3              ;;; deposit accumulated wisdom into terrain
+  CDBG_EMIT                     ;;; broadcast identity frame to bus
+  AGENT_KILL    SELF
+
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+;;; PHASE IV: CDBG ROUTINES (v4.0)
+;;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.EXPORT  cdbg_announce
+.EXPORT  cdbg_emit_emotion
+.EXPORT  cdbg_listen_loop
+
+;;; ─────────────────────────────────────────────────
+;;; cdbg_announce — emit agent identity frame
+;;; Args:    none
+;;; Side effects: 5-byte AGENT frame sent to bus
+;;; ─────────────────────────────────────────────────
+@cdbg_announce:
+  CDBG_EMIT                     ;;; CTX=AGENT, payload=24-bit agent ID, CRC-4
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; cdbg_emit_emotion — emit emotional state as CDBG EMOTION frame
+;;; Args:    R0 = valence (0–255), R1 = intensity (0–255)
+;;; ─────────────────────────────────────────────────
+@cdbg_emit_emotion:
+  CTX_SWITCH    5               ;;; set CTX = EMOTION (0x5)
+  CDBG_EMIT                     ;;; emit with current emotional registers
+  CTX_SWITCH    1               ;;; restore CTX = AGENT
+  RET
+
+;;; ─────────────────────────────────────────────────
+;;; cdbg_listen_loop — receive and dispatch CDBG frames
+;;; Args:    none
+;;; Exits when MSG_RECV returns 0 (no more frames)
+;;; R0 = decoded frame, R1 = CTX nibble
+;;; ─────────────────────────────────────────────────
+@cdbg_listen_loop:
+  CDBG_RECV     R0              ;;; decode incoming frame → R0
+  JZ            R0, @cdbg_done ;;; 0 means no frame / error
+  JMP           @cdbg_listen_loop
+@cdbg_done:
+  RET

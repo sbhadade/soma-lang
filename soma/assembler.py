@@ -286,6 +286,56 @@ def _encode_instruction(mnemonic: str, operands: list, labels: Dict[str, int], p
         if len(ops) >= 2:
             imm = _resolve(ops[1]) & 0xFFFF
 
+    # ── Phase II: Emotional memory ─────────────────────────────────────────
+    elif opcode == OPCODES.get("EMOT_TAG") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+        if len(ops) >= 2:
+            imm = _resolve(ops[1]) & 0xFFFF
+    elif opcode == OPCODES.get("DECAY_PROTECT") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+        if len(ops) >= 2:
+            imm = _resolve(ops[1]) & 0xFFFF
+    elif opcode in (OPCODES.get("PREDICT_ERR", -1), OPCODES.get("EMOT_RECALL", -1),
+                    OPCODES.get("SURPRISE_CALC", -1)):
+        if len(ops) >= 1:
+            reg = _resolve(ops[0]) & 0xFFFF
+        if len(ops) >= 2:
+            imm = _resolve(ops[1]) & 0xFFFF
+
+    # ── Phase III: Curiosity ───────────────────────────────────────────────
+    elif opcode == OPCODES.get("GOAL_SET") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("GOAL_CHECK") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("SOUL_QUERY") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("META_SPAWN"):
+        if len(ops) >= 1:
+            agent_id = _resolve(ops[0]) & 0xFF
+        if len(ops) >= 2:
+            imm = _resolve(ops[1]) & 0xFFFF
+    elif opcode == OPCODES.get("EVOLVE") and len(ops) >= 1:
+        agent_id = _resolve(ops[0]) & 0xFF
+        reg      = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("INTROSPECT"):
+        pass
+    elif opcode in (OPCODES.get("TERRAIN_READ", -1), OPCODES.get("TERRAIN_MARK", -1)):
+        if len(ops) >= 1:
+            reg = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("SOUL_INHERIT") and len(ops) >= 1:
+        agent_id = _resolve(ops[0]) & 0xFF
+        reg      = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("GOAL_STALL") and len(ops) >= 1:
+        imm = _resolve(ops[0]) & 0xFFFF
+
+    # ── Phase IV: CDBG ─────────────────────────────────────────────────────
+    elif opcode == OPCODES.get("CDBG_EMIT"):
+        pass
+    elif opcode == OPCODES.get("CDBG_RECV") and len(ops) >= 1:
+        reg = _resolve(ops[0]) & 0xFFFF
+    elif opcode == OPCODES.get("CTX_SWITCH") and len(ops) >= 1:
+        imm = _resolve(ops[0]) & 0xFFFF
+
     word = (
         (opcode    & 0xFF) << 56 |
         (agent_id  & 0xFF) << 48 |

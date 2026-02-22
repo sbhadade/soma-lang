@@ -208,3 +208,61 @@ comment         ::= ';;;' [^\n]* newline
                   | ';;' [^\n]* newline
 
 newline         ::= '\n' | '\r\n'
+
+;;; ── PHASE II: EMOTIONAL MEMORY INSTRUCTIONS ─────────────────────────────
+
+emot_instr      ::= 'EMOT_TAG'     reg ',' operand       ;;; tag node: reg=valence, imm=intensity
+                  | 'DECAY_PROTECT' reg ',' operand       ;;; protect reg cycles/permanent
+                  | 'PREDICT_ERR'  reg ',' reg            ;;; prediction error → reg
+                  | 'EMOT_RECALL'  reg ',' coord          ;;; recall tag at coord → reg
+                  | 'SURPRISE_CALC' reg ',' reg ',' reg   ;;; surprise(a,b) → reg
+
+;;; ── PHASE III: CURIOSITY INSTRUCTIONS ────────────────────────────────────
+;;;   (AgentSoul + SomTerrain — "A Path to AGI Part III")
+
+curiosity_instr ::= 'GOAL_SET'     reg                   ;;; set goal vector from reg
+                  | 'GOAL_CHECK'   reg                   ;;; distance to goal → reg; sets STALL flag
+                  | 'SOUL_QUERY'   reg                   ;;; content-match memory → reg (intuition)
+                  | 'META_SPAWN'   operand ',' label      ;;; spawn N agents with mutated goals
+                  | 'EVOLVE'       agent_reg              ;;; select best child → agent_reg
+                  | 'INTROSPECT'                         ;;; emit soul snapshot (no operands)
+                  | 'TERRAIN_READ' reg                   ;;; collective map wisdom → reg
+                  | 'TERRAIN_MARK' reg                   ;;; write emotional state into terrain
+                  | 'SOUL_INHERIT' agent_reg              ;;; inherit soul from agent
+                  | 'GOAL_STALL'   label                 ;;; jump if stall_count > threshold
+
+;;; ── PHASE IV: CDBG INSTRUCTIONS ─────────────────────────────────────────
+;;;   (Context-Discriminated Binary Grammar — 5-byte frames)
+
+cdbg_instr      ::= 'CDBG_EMIT'                         ;;; emit 5-byte agent identity frame
+                  | 'CDBG_RECV'   reg                   ;;; decode incoming frame → reg
+                  | 'CTX_SWITCH'  integer               ;;; set active CTX nibble (0–6)
+
+;;; ── UPDATED instruction rule (v4.0) ──────────────────────────────────────
+;;;
+;;;   instruction ::= agent_instr
+;;;                 | som_instr
+;;;                 | msg_instr
+;;;                 | flow_instr
+;;;                 | mem_instr
+;;;                 | arith_instr
+;;;                 | emot_instr       ← NEW Phase II
+;;;                 | curiosity_instr  ← NEW Phase III
+;;;                 | cdbg_instr       ← NEW Phase IV
+
+;;; ── CTX NIBBLE VALUES (CDBG) ─────────────────────────────────────────────
+
+ctx_id          ::= '0'   ;;; SOM_MAP  — X[8] · Y[8] · OPCODE[8]
+                  | '1'   ;;; AGENT    — cluster[4] · map[8] · seq[12]
+                  | '2'   ;;; SOUL     — field_id[8] · fp16_value[16]
+                  | '3'   ;;; MEMORY   — 24-bit content-address hash prefix
+                  | '4'   ;;; PULSE    — 24-bit heartbeat counter
+                  | '5'   ;;; EMOTION  — row[8] · valence[8] · intensity[8]
+                  | '6'   ;;; HISTORY  — generation[8] · goal_record_id[16]
+
+;;; ── VERSION HISTORY ──────────────────────────────────────────────────────
+;;;
+;;;   v1.0  — Foundation: agent lifecycle, SOM, messaging, control flow
+;;;   v2.0  — Memory: emotional tagging, decay, consolidation (Phase II)
+;;;   v3.0  — Refactor: opcode renumbering, register architecture cleanup
+;;;   v4.0  — Curiosity + CDBG: AgentSoul, SomTerrain, binary grammar (Phase III+IV)
