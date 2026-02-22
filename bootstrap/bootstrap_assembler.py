@@ -41,6 +41,16 @@ OPCODES = {
     'CALL':0x35,'RET':0x36,'HALT':0x37,'NOP':0x38,
     'MOV':0x40,'STORE':0x41,'LOAD':0x42,'TRAP':0x43,
     'ADD':0x50,'SUB':0x51,'MUL':0x52,'DIV':0x53,'DOT':0x54,'NORM':0x55,
+    # Phase II — Emotional memory
+    'EMOT_TAG':0x80,'DECAY_PROTECT':0x81,'PREDICT_ERR':0x82,
+    'EMOT_RECALL':0x83,'SURPRISE_CALC':0x84,
+    # Phase III — Curiosity (AgentSoul + SomTerrain)
+    'GOAL_SET':0x60,'GOAL_CHECK':0x61,'SOUL_QUERY':0x62,
+    'META_SPAWN':0x63,'EVOLVE':0x64,'INTROSPECT':0x65,
+    'TERRAIN_READ':0x66,'TERRAIN_MARK':0x67,
+    'SOUL_INHERIT':0x68,'GOAL_STALL':0x69,
+    # Phase IV — CDBG
+    'CDBG_EMIT':0x70,'CDBG_RECV':0x71,'CTX_SWITCH':0x72,
 }
 OPCODE_SET = set(OPCODES.keys())
 
@@ -62,20 +72,45 @@ DTYPE_MAP = {'INT':DTYPE_INT,'FLOAT':DTYPE_FLOAT,'VEC':DTYPE_VEC,
 def parse_data_section(source: str) -> 'dict[str, dict]':
     """
     Returns: {name: {'type': DTYPE_*, 'values': [float, ...]}}
+    Supports multiline VEC = [v0, v1, ...,
+                               vN] definitions.
     """
     symbols = {}
     in_data = False
+    pending_name = None   # for multiline VEC accumulation
+    pending_dtype = None
+    pending_accum = ''    # accumulated raw value string across lines
 
-    for raw in source.splitlines():
+    lines = source.splitlines()
+    i = 0
+    while i < len(lines):
+        raw = lines[i]; i += 1
         line = re.sub(r';;;.*', '', raw)
         line = re.sub(r';.*',   '', line).strip()
         if not line:
+            # still accumulate if in a multiline VEC
+            if pending_name:
+                pending_accum += ' '
             continue
+
         if line.startswith('.DATA'):
             in_data = True;  continue
         if line.startswith('.CODE') or line.startswith('.SOMA') or line.startswith('@'):
-            in_data = False; continue
+            in_data = False
+            # close any open multiline
+            if pending_name:
+                _flush_pending(symbols, pending_name, pending_dtype, pending_accum)
+                pending_name = pending_dtype = None; pending_accum = ''
+            continue
         if not in_data or line.startswith('.'):
+            continue
+
+        # Are we mid-multiline accumulation?
+        if pending_name is not None:
+            pending_accum += ' ' + line
+            if ']' in pending_accum or '>' in pending_accum:
+                _flush_pending(symbols, pending_name, pending_dtype, pending_accum)
+                pending_name = pending_dtype = None; pending_accum = ''
             continue
 
         # name : TYPE[N] = value_expression
@@ -87,49 +122,68 @@ def parse_data_section(source: str) -> 'dict[str, dict]':
             continue
 
         name, type_str = m.group(1), m.group(2)
-        arr_suffix = m.group(3)          # "[64]" or None
+        arr_suffix = m.group(3)
         val_str    = (m.group(4) or '').strip()
         dtype      = DTYPE_MAP.get(type_str, DTYPE_FLOAT)
-        values     = []
 
         if dtype == DTYPE_VEC:
-            if '<' in val_str and '>' in val_str:
-                inner = val_str[val_str.index('<')+1 : val_str.index('>')]
-                values = [float(x.strip()) for x in inner.split(',') if x.strip()]
-            elif arr_suffix:
-                # VEC[N] — zero initialise
-                n = int(arr_suffix[1:-1])
+            # Check if the bracket is closed on this line
+            has_open  = '[' in val_str or '<' in val_str
+            has_close = ']' in val_str or '>' in val_str
+            if has_open and not has_close:
+                # multiline — start accumulation
+                pending_name  = name
+                pending_dtype = (dtype, arr_suffix)
+                pending_accum = val_str
+                continue
+            # single-line VEC — flush immediately
+            _flush_pending(symbols, name, (dtype, arr_suffix), val_str)
+        else:
+            # non-VEC types — handle inline
+            values = []
+            if dtype == DTYPE_COORD:
+                if '(' in val_str and ')' in val_str:
+                    inner = val_str[val_str.index('(')+1 : val_str.index(')')]
+                    values = [float(x.strip()) for x in inner.split(',') if x.strip()]
+                else:
+                    values = [0.0, 0.0]
+            elif dtype == DTYPE_INT:
+                try:    values = [float(int(val_str, 0))]
+                except: values = [0.0]
+            elif dtype in (DTYPE_FLOAT, DTYPE_WGHT):
+                try:    values = [float(val_str)]
+                except: values = [0.0]
+            elif dtype == DTYPE_BYTES:
+                n = int(arr_suffix[1:-1]) if arr_suffix else 1
                 values = [0.0] * n
-
-        elif dtype == DTYPE_COORD:
-            if '(' in val_str and ')' in val_str:
-                inner = val_str[val_str.index('(')+1 : val_str.index(')')]
-                values = [float(x.strip()) for x in inner.split(',') if x.strip()]
-            else:
-                values = [0.0, 0.0]
-
-        elif dtype == DTYPE_INT:
-            try:
-                values = [float(int(val_str, 0))]
-            except Exception:
+            if not values:
                 values = [0.0]
+            symbols[name] = {'type': dtype, 'values': values}
 
-        elif dtype in (DTYPE_FLOAT, DTYPE_WGHT):
-            try:
-                values = [float(val_str)]
-            except Exception:
-                values = [0.0]
-
-        elif dtype == DTYPE_BYTES:
-            n = int(arr_suffix[1:-1]) if arr_suffix else 1
-            values = [0.0] * n
-
-        if not values:
-            values = [0.0]
-
-        symbols[name] = {'type': dtype, 'values': values}
+    # flush any trailing multiline
+    if pending_name:
+        _flush_pending(symbols, pending_name, pending_dtype, pending_accum)
 
     return symbols
+
+
+def _flush_pending(symbols, name, dtype_info, val_str):
+    """Parse a (possibly multiline-joined) VEC value string and store it."""
+    dtype, arr_suffix = dtype_info if isinstance(dtype_info, tuple) else (dtype_info, None)
+    values = []
+    if dtype == DTYPE_VEC:
+        for open_b, close_b in (('[', ']'), ('<', '>')):
+            if open_b in val_str and close_b in val_str:
+                inner = val_str[val_str.index(open_b)+1 : val_str.index(close_b)]
+                values = [float(x.strip()) for x in inner.split(',') if x.strip()]
+                break
+        if not values and arr_suffix:
+            n = int(arr_suffix[1:-1])
+            values = [0.0] * n
+    if not values:
+        values = [0.0]
+    symbols[name] = {'type': dtype if isinstance(dtype, int) else DTYPE_VEC, 'values': values}
+
 
 
 def build_data_section(symbols: dict) -> 'tuple[bytes, dict]':
@@ -386,7 +440,7 @@ class Assembler:
                 elif t and t.startswith('A'): agent=creg('A')
                 t2=peek()
                 if t2 and t2.startswith('R'): src_reg=creg('R')
-                else: imm=cimm()
+                else: imm=cmem()  # handles data refs like [goal_template] and literals
             elif op==0x21: dst_reg=creg('R')
             elif op==0x23: imm=cimm()
             elif op==0x24: src_reg=creg('R'); dst_reg=creg('R')
@@ -432,6 +486,71 @@ class Assembler:
                 if v is not None: consume(); imm=v
             elif op in(0x54,0x55): dst_reg=creg('R')
 
+            # ── Phase II: Emotional memory ────────────────────────────── #
+            elif op==0x80:  # EMOT_TAG  reg, imm_intensity
+                t=peek()
+                if t and t.startswith('S'): consume()       # accept S-regs (treat as R0)
+                elif t and t.startswith('R'): dst_reg=creg('R')
+                t2=peek()
+                v=parse_imm(t2)
+                if v is not None: consume(); imm=v
+                elif t2 and t2.startswith('R'): src_reg=creg('R')
+            elif op==0x81:  # DECAY_PROTECT  imm_cycles
+                imm=cimm()
+            elif op==0x82:  # PREDICT_ERR  dst, src
+                dst_reg=creg('R'); src_reg=creg('R')
+            elif op==0x83:  # EMOT_RECALL  dst
+                dst_reg=creg('R')
+            elif op==0x84:  # SURPRISE_CALC  dst, src
+                dst_reg=creg('R'); src_reg=creg('R')
+
+            # ── Phase III: Curiosity ─────────────────────────────────── #
+            elif op==0x60:  # GOAL_SET  reg
+                dst_reg=creg('R')
+            elif op==0x61:  # GOAL_CHECK  reg
+                dst_reg=creg('R')
+            elif op==0x62:  # SOUL_QUERY  reg
+                dst_reg=creg('R')
+            elif op==0x63:  # META_SPAWN  [count_sym], @entry
+                # count goes in agent byte (resolve data sym value at asm time)
+                t=peek()
+                count_val=0
+                if t and re.match(r'^[A-Za-z_]\w*$',t) and t not in OPCODE_SET:
+                    consume()
+                    off=self.data_sym.get(t,None)
+                    if off is not None:
+                        # read the float value back from data_bytes and cast to int
+                        import struct as _s
+                        try: count_val=int(_s.unpack_from('>f',self.data_bytes,
+                                self._data_payload_start()+off)[0])
+                        except: count_val=4
+                    else: count_val=4
+                elif t: v=parse_imm(t); count_val=v if v is not None else 0; consume()
+                agent=count_val & 0xFF
+                imm=clabel()
+            elif op==0x64:  # EVOLVE  A<winner>
+                agent=creg('A')
+                t=peek()
+                if t and t.startswith('R'): dst_reg=creg('R')
+            elif op==0x65:  # INTROSPECT  (no operands)
+                pass
+            elif op==0x66:  # TERRAIN_READ  dst
+                dst_reg=creg('R')
+            elif op==0x67:  # TERRAIN_MARK  reg
+                dst_reg=creg('R')
+            elif op==0x68:  # SOUL_INHERIT  A<src>
+                agent=creg('A')
+            elif op==0x69:  # GOAL_STALL  @label
+                imm=clabel()
+
+            # ── Phase IV: CDBG ───────────────────────────────────────── #
+            elif op==0x70:  # CDBG_EMIT  (no operands)
+                pass
+            elif op==0x71:  # CDBG_RECV  dst
+                dst_reg=creg('R')
+            elif op==0x72:  # CTX_SWITCH  imm_ctx
+                imm=cimm()
+
             word = (
                 (op      & 0xFF) << 56 |
                 (agent   & 0xFF) << 48 |
@@ -440,6 +559,19 @@ class Assembler:
                 (imm     & 0xFFFFFFFF)
             )
             self.output += struct.pack('>Q', word)
+
+    def _data_payload_start(self) -> int:
+        """Return byte offset within data_bytes where the float32 payload begins
+        (i.e., after the symbol table header)."""
+        if not self.data_bytes:
+            return 0
+        off = 0
+        import struct as _s
+        (n,) = _s.unpack_from('>I', self.data_bytes, off); off += 4
+        for _ in range(n):
+            (nl,) = _s.unpack_from('>H', self.data_bytes, off); off += 2 + nl
+            off += 9  # dtype(1) + payload_offset(4) + count(4)
+        return off
 
     # ── label patching ───────────────────────────────────────────────── #
 
