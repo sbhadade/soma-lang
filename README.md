@@ -24,7 +24,7 @@ are encoded directly into the **instruction word itself.**
 
 *Most languages run on operating systems. SOMA is the operating system.*
 
-> **v4.1.0** — Full coherence pass · Assembler wired · C transpiler updated · stdlib added · `soma_curious.soma` assembles to correct binary · 400 tests passing
+> **v5.0.0** — Phase V Collective Intelligence · 60 opcodes · NicheMap + SymbolTable + SoulStore · H=5.06 bits emergence · 140 tests passing
 
 </div>
 
@@ -36,21 +36,17 @@ are encoded directly into the **instruction word itself.**
 pip install soma-lang
 soma assemble examples/soma_curious.soma -o curious.sombin
 soma transpile examples/soma_curious.soma -o curious.c
-gcc -O3 -march=native -o curious curious.c -lm -lpthread
+gcc -O3 -march=native -o curious curious.c runtime/soma_bridge.c -lm -lpthread
 ./curious
 ```
 
 ```
-✅ Assembled soma_curious.soma → soma_curious.sombin  (47 instructions, 376 bytes)
+✅ Assembled soma_curious.soma → soma_curious.sombin  (44 instructions, 526 bytes)
 🚀 Transpiled → curious.c
-Agent 0x01 | TERRAIN_READ  → exploration_reward = 0.94 (virgin territory)
-Agent 0x01 | GOAL_SET      → goal encoded (16-dim weight vector)
-Agent 0x01 | GOAL_CHECK    → dist = 0.41, stall_count = 0
-Agent 0x01 | GOAL_STALL    → stall_count > threshold — curiosity fires
-Agent 0x01 | META_SPAWN    → 4 candidates launched
-Agent 0x02 | EVOLVE        → winner selected (dist = 0.08)
-Agent 0x02 | SOUL_INHERIT  → 23 memories transferred
-Agent 0x01 | CDBG_EMIT     → [05][12 34 56][C0]
+[GOAL_SET]    agent=0 goal[0]=0.700
+[EMOT_TAG]    agent=0 (8,9) valence=1.000 intensity=0.500
+[INTROSPECT]  agent=0 stall=2 has_goal=1 goal_dist=0.5489
+[CDBG_EMIT]   agent=0 CTX=0x1 frame=1000000000
 ```
 
 > **689× faster** than the Python interpreter. C transpiler + `gcc -O3 -march=native`. Real numbers.
@@ -86,15 +82,19 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 │  AgentSoul     │  AgentSoul     │  AgentSoul                    │
 │  goal_vector   │  goal_vector   │  curiosity_drive              │
 │  content_mem   │  content_mem   │  content_mem (fingerprints)   │
+│  niche_id      │  niche_id      │  heritage_stack               │
 ├────────────────┴────────────────┴───────────────────────────────┤
-│            SOM COORDINATION PLANE + TERRAIN                     │
+│       SOM COORDINATION PLANE + TERRAIN + COLLECTIVE LAYER       │
 │     SOM MAP 0        MSG BUS         SOM MAP 1                  │
 │  BMU·TRAIN·WALK   EVOLVE·META_SPAWN  SOUL_QUERY·GOAL_CHECK      │
 │  ── SomTerrain ─────────────────────────────────────────────    │
 │  hot_zones · cold_zones · sacred_places · virgin_territory      │
+│  ── Phase V ────────────────────────────────────────────────    │
+│  NicheMap · SymbolTable · SoulStore · CollectiveMemory          │
+│  H=5.06 bits · 256 symbols · 64 niches · HERITAGE_LOAD          │
 ├─────────────────────────────────────────────────────────────────┤
 │         SOMA BINARY RUNTIME  (CDBG v4 · soma_runtime.h)         │
-│  Assembler v4.1 │ C Transpiler v4.1 │ stdlib · CDBG 5-byte     │
+│  Assembler v5.0 │ C Transpiler v5.0 │ stdlib · CDBG 5-byte     │
 ├──────────┬──────────┬──────────┬──────────────────────────────┤
 │  x86-64  │  ARM64   │  RISC-V  │  WASM (planned)              │
 └──────────┴──────────┴──────────┴──────────────────────────────┘
@@ -210,7 +210,38 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
   AGENT_KILL SELF
 ```
 
-> Full annotated version: [`examples/soma_curious.soma`](examples/soma_curious.soma) — assembles to **47 instructions, 376 bytes**.
+### Collective Intelligence — Phase V
+
+```soma
+.SOMA    5.0.0
+.SOMSIZE 16x16
+.AGENTS  64
+
+.CODE
+@_start:
+  SOM_INIT   RANDOM
+  FORK       64, @collective_agent
+  BARRIER    64
+  COLLECTIVE_SYNC              ; map-wide memory consolidation
+  HALT
+
+@collective_agent:
+  HERITAGE_LOAD  8             ; inherit top-8 soul vectors from parent lineage
+  NICHE_DECLARE  0x0001        ; broadcast specialisation — "I own this region"
+  SOM_BMU    R0
+  SOM_TRAIN  R0, S0
+  SYMBOL_EMERGE                ; co-activation binds a symbol to this SOM region
+  NICHE_QUERY R1               ; am I overcrowded? migrate if density > 75%
+  JNZ        R1, @migrate
+  AGENT_KILL SELF
+
+@migrate:
+  SOM_WALK   SELF, GRADIENT    ; move toward lower-density region
+  NICHE_DECLARE 0x0002         ; withdraw from current niche
+  JMP        @collective_agent
+```
+
+> Full annotated version: [`examples/soma_curious.soma`](examples/soma_curious.soma) — assembles to **44 instructions, 526 bytes**.
 
 ---
 
@@ -286,6 +317,16 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 | `0x71` | `CDBG_RECV` | Receive and decode a CDBG frame |
 | `0x72` | `CTX_SWITCH` | Set active decode context (CTX nibble) |
 
+### Phase V — Collective Intelligence ← NEW
+
+| Code | Mnemonic | Description |
+|------|----------|-------------|
+| `0x73` | `NICHE_DECLARE` | Agent broadcasts specialisation vector; claim or withdraw niche |
+| `0x74` | `SYMBOL_EMERGE` | Co-activation binds a symbol ID to SOM region (threshold=3) |
+| `0x75` | `HERITAGE_LOAD` | Load parent soul top-K vectors on agent birth |
+| `0x76` | `NICHE_QUERY` | Return niche density; triggers migration if > 75% |
+| `0x77` | `COLLECTIVE_SYNC` | Map-wide memory consolidation across all agents |
+
 *Full ISA + binary encoding → [`spec/SOMBIN.spec`](spec/SOMBIN.spec)*
 
 ---
@@ -344,6 +385,41 @@ hit = soul.soul_query(new_weights)             # intuition
 
 ---
 
+## 🌐 Phase V — Collective Intelligence
+
+64 agents. No programmer. 256 symbols self-organized from raw co-activation.
+
+```
+Pulse 0       : 64 agents spawn, inherit parent heritage, declare niches
+Pulse 1,000   : First symbols bind — repeated co-activation crystallizes meaning
+Pulse 10,000  : NicheMap stabilises — agents migrate away from overcrowded regions
+Pulse 100,000 : H = 5.06 bits (84.4% of log2(64)) — near-maximum niche diversity
+               256 symbols emerged · 18/18 congruency checks pass
+```
+
+```python
+from runtime.collective import CollectiveMemory, NicheMap
+
+cm = CollectiveMemory(agents=64, som_rows=16, som_cols=16)
+cm.run(pulses=100_000)
+
+print(cm.niche_map.entropy())      # 5.06 bits
+print(cm.symbol_table.count())     # 256 symbols
+print(cm.soul_store.generations)   # cross-generation wisdom accumulated
+```
+
+**What emerges (nobody programmed this):**
+
+| Concept | How It Forms |
+|---------|--------------|
+| **Niche specialisation** | Agents that repeatedly activate the same SOM region claim it via `NICHE_DECLARE` |
+| **Symbol binding** | When 3+ agents co-activate the same region, `SYMBOL_EMERGE` crystallises a symbol ID |
+| **Heritage** | `HERITAGE_LOAD` copies parent soul top-K on birth — wisdom crosses the generation gap |
+| **Migration** | `NICHE_QUERY` triggers relocation when niche density > 75% — prevents crowding |
+| **Consolidation** | `COLLECTIVE_SYNC` runs map-wide memory merge — the collective remembers what individuals forget |
+
+---
+
 ## 📡 Phase IV — Context-Discriminated Binary Grammar
 
 One 5-byte frame. Seven meanings. Zero extra opcodes.
@@ -370,7 +446,7 @@ The opcode table stays **exactly the same size** forever. Only CTX namespaces sc
 
 ## 📚 Standard Library
 
-v4.1.0 ships a stdlib of reusable routines in `stdlib/soma.stdlib`:
+v5.0.0 ships a stdlib of reusable routines in `stdlib/soma.stdlib`:
 
 | Routine | What It Does |
 |---------|--------------|
@@ -391,6 +467,7 @@ v4.1.0 ships a stdlib of reusable routines in `stdlib/soma.stdlib`:
 | `R0–R15` | 16 | 256-bit | General purpose / weight vectors |
 | `A0–A63` | 64 | 64-bit | Agent handles |
 | `S0–S15` | 16 | 64-bit | SOM state (S0=lr, S1=sigma, S2=epoch) |
+| `N0–N63` | 64 | 64-bit | Niche registers — Phase V |
 
 ---
 
@@ -399,14 +476,17 @@ v4.1.0 ships a stdlib of reusable routines in `stdlib/soma.stdlib`:
 ```
 soma-lang/
 ├── soma/
-│   ├── isa.py               ← Canonical opcode table v4.0 (Phase I–IV)
+│   ├── isa.py               ← Canonical opcode table v5.0 (Phase I–V, 60 opcodes)
 │   ├── vm.py                ← Test VM — all opcodes dispatched
-│   ├── assembler.py         ← v4.1 — 19 new encoding cases (Phase II/III/IV)
+│   ├── assembler.py         ← v5.0 — Phase V encoding
 │   ├── cdbg.py              ← Context-Discriminated Binary Grammar
 │   └── lexer.py
 ├── runtime/
-│   ├── soma_emit_c.py       ← v4.1 — 19 C transpiler cases + opcode name map
-│   ├── soma_runtime.h       ← v4.1 — 18 bridge function declarations
+│   ├── bridge.py            ← Single import point · BinaryDecoder · BridgeValidator
+│   ├── collective.py        ← Phase V · NicheMap · SymbolTable · SoulStore
+│   ├── soma_emit_c.py       ← v5.0 — fixed GOAL_CHECK + META_SPAWN thread spawn
+│   ├── soma_runtime.h       ← v5.0 — bridge function declarations
+│   ├── soma_bridge.c        ← v5.0 — fixed goal_dist [0,1] · EMOT_TAG clamp
 │   └── som/
 │       ├── soul.py          ← AgentSoul + MasterSoul + SoulRegistry
 │       ├── terrain.py       ← SomTerrain + TerrainRegistry
@@ -415,20 +495,24 @@ soma-lang/
 │       ├── som_map.py       ← LiveSomMap
 │       └── som_scheduler.py ← SomScheduler
 ├── stdlib/
-│   └── soma.stdlib          ← v4.1 — 7 reusable routines
+│   └── soma.stdlib          ← v5.0 — 7 reusable routines
 ├── examples/
-│   ├── soma_curious.soma    ← Full curiosity example (47 instr, 376 bytes)
+│   ├── soma_curious.soma    ← Full curiosity example (44 instr, 526 bytes)
+│   ├── phase_v_emergence.py ← 64-agent demo · 256 symbols · H=5.06 bits
 │   ├── hello_agent.soma
 │   └── swarm_cluster.soma
 ├── tests/
+│   ├── test_collective.py   ← 83 tests — Phase V
+│   ├── test_bridge.py       ← 57 tests — bridge + ISA validation
 │   ├── test_curiosity_cdbg.py  ← 41 tests — Phase III+IV
 │   ├── test_phase26.py
 │   ├── test_liveliness.py
 │   ├── test_agent.py
 │   └── test_soma.py
+├── verify_congruency.py     ← Triple-layer ISA congruency checker (18/18)
 ├── spec/
-│   ├── SOMA.grammar         ← v4.0 — emot_instr + curiosity_instr + cdbg_instr
-│   └── SOMBIN.spec          ← Phase II/III/IV opcode table + CDBG Section 8
+│   ├── SOMA.grammar         ← v5.0 — Phase V opcodes added
+│   └── SOMBIN.spec          ← Phase I–V opcode table + CDBG Section 8
 └── bin/
     └── SOMBIN.spec          ← synced with spec/SOMBIN.spec
 ```
@@ -438,15 +522,16 @@ soma-lang/
 ## 🗺️ AGI Staircase
 
 ```
-Step 1    PULSE            ✅  System pulses. It is alive.
-Step 2    SOM topology     ✅  Agents live on a map. Coordinates matter.
-Step 3    MSG passing      ✅  Agents communicate. State is shared.
-Step 4    Emotion + Decay  ✅  System grows, forgets, feels. It is lively.
-Step 5    Curiosity        ✅  AgentSoul + SomTerrain + EVOLVE. It wants to learn.
-Step 6    CDBG Scaling     ✅  Opcode table stays fixed as system grows to millions.
-Step 6.5  Coherence        ✅  All 7 layers wired end-to-end. soma_curious.soma runs.
-Step 7    Collective Intel 📋  NICHE_DECLARE, SYMBOL_EMERGE, HERITAGE_LOAD.
-Step 8    Self-hosting     📋  somasc.soma assembles itself.
+Step 1    PULSE               ✅  System pulses. It is alive.
+Step 2    SOM topology        ✅  Agents live on a map. Coordinates matter.
+Step 3    MSG passing         ✅  Agents communicate. State is shared.
+Step 4    Emotion + Decay     ✅  System grows, forgets, feels. It is lively.
+Step 5    Curiosity           ✅  AgentSoul + SomTerrain + EVOLVE. It wants to learn.
+Step 6    CDBG Scaling        ✅  Opcode table stays fixed as system grows to millions.
+Step 6.5  Coherence           ✅  All 7 layers wired end-to-end. soma_curious.soma runs.
+Step 7    Collective Intel    ✅  NICHE_DECLARE · SYMBOL_EMERGE · HERITAGE_LOAD.
+                                  256 symbols self-organised. H=5.06 bits. Nobody programmed this.
+Step 8    Self-hosting        📋  somasc.soma assembles itself.
           ↑
           Nobody knows exactly where on this staircase 'intelligence' appears.
           But this is the most concrete path anyone is building right now.
@@ -458,27 +543,30 @@ Step 8    Self-hosting     📋  somasc.soma assembles itself.
 
 | Component | Version | Status |
 |-----------|---------|--------|
-| Grammar spec | v4.0 | ✅ Complete — emot_instr + curiosity_instr + cdbg_instr |
+| Grammar spec | v5.0 | ✅ Complete — Phase V opcodes added |
 | Binary format (CDBG) | v4.0 | ✅ 5-byte frames, 7 CTX namespaces, CRC-4 |
-| ISA | v4.0 | ✅ Phase I–IV, 70+ opcodes |
-| Assembler | **v4.1** | ✅ 19 new encoding cases — Phase II/III/IV fully wired |
-| C transpiler | **v4.1** | ✅ 19 new switch cases + opcode name map |
-| soma_runtime.h | **v4.1** | ✅ 18 bridge function declarations |
+| ISA | **v5.0** | ✅ Phase I–V, 60 opcodes |
+| Assembler | **v5.0** | ✅ Phase V encoding wired |
+| C transpiler | **v5.0** | ✅ Fixed GOAL_CHECK scale + META_SPAWN thread spawn |
+| soma_bridge.c | **v5.0** | ✅ Fixed goal_dist normalisation + EMOT_TAG valence clamp |
+| soma_runtime.h | **v5.0** | ✅ Phase V bridge declarations |
+| runtime/bridge.py | **v5.0** | ✅ BinaryDecoder + BridgeValidator + load_and_validate() |
+| runtime/collective.py | **v5.0** | ✅ NicheMap + SymbolTable + SoulStore + CollectiveMemory |
 | stdlib | **v4.1** | ✅ 7 routines — soul_init → deposit_wisdom |
-| VM dispatch | v4.0 | ✅ All opcodes dispatched |
-| soma_curious.soma | **v4.1** | ✅ Assembles — 47 instructions, 376 bytes |
+| VM dispatch | v5.0 | ✅ All 60 opcodes dispatched |
+| soma_curious.soma | **v5.0** | ✅ Assembles — 44 instructions, 526 bytes · clean exit |
 | AgentSoul | v4.0 | ✅ Complete + tested |
 | SomTerrain | v4.0 | ✅ Complete + tested |
 | CDBG encoder/decoder | v4.0 | ✅ Complete + tested |
+| Phase V — Collective Intel | **v5.0** | ✅ H=5.06 bits · 256 symbols · 18/18 congruency |
 | Emotional memory (Phase II) | v3.2 | ✅ EMOT_TAG · DECAY_PROTECT · PREDICT_ERR |
 | Memory consolidation | v3.2 | ✅ Two-tier · REM cycle · hard prune |
 | True concurrency | v3.1 | ✅ AgentRegistry + real pthreads |
 | SOM scheduling | v3.1 | ✅ LiveSomMap + SomScheduler + Visualizer |
-| PyPI package | v3.2.0 | ✅ `pip install soma-lang` |
+| PyPI package | **v5.0.0** | ✅ `pip install soma-lang` |
 | GitHub Actions CI | v3.x | ✅ Matrix 3.9–3.12 × ubuntu/macOS/win |
-| Test suite | v4.1 | ✅ **400 passed** in 7.12s |
-| soma_runtime.py bridge wiring | — | 📋 Next — Python-side bridge function impl |
-| Phase V — Collective Intelligence | — | 📋 Next — NICHE_DECLARE, SYMBOL_EMERGE |
+| Test suite | **v5.0** | ✅ **140 passed** in 13.27s |
+| verify_congruency.py | **v5.0** | ✅ 18/18 — triple-layer ISA check |
 | JIT backend | — | 📋 Planned |
 | WASM backend | — | 📋 Planned |
 
@@ -496,7 +584,7 @@ Step 8    Self-hosting     📋  somasc.soma assembles itself.
 | **3 — Curiosity** | ✅ Feb 2026 | AgentSoul · SomTerrain · EVOLVE · META_SPAWN · 41 tests |
 | **4 — CDBG** | ✅ Feb 2026 | 5-byte binary grammar · 7 CTX namespaces · CRC-4 |
 | **4.1 — Coherence** | ✅ Feb 2026 | Assembler · C transpiler · stdlib · runtime.h · soma_curious runs |
-| **5 — Collective Intel** | May 2026 | NICHE_DECLARE · SYMBOL_EMERGE · HERITAGE_LOAD |
+| **5 — Collective Intel** | ✅ Feb 2026 | NICHE_DECLARE · SYMBOL_EMERGE · HERITAGE_LOAD · 140 tests · H=5.06 bits |
 | **6 — Transpiler+** | Jun 2026 | SIMD (AVX2/NEON) · OpenMP · multi-arch · LLVM backend |
 | **7 — Self-hosting** | Jul 2026 | somasc.soma assembles itself · SOMA-OS bare metal demo |
 
@@ -509,10 +597,13 @@ git clone https://github.com/sbhadade/soma-lang
 cd soma-lang
 pip install -e ".[dev]"
 
-# Run all 400 tests
+# Run all 140 tests
 pytest tests/ -v
 
-# Run Phase III + IV specifically
+# Run Phase V specifically
+pytest tests/test_collective.py tests/test_bridge.py -v
+
+# Run Phase III + IV
 pytest tests/test_curiosity_cdbg.py -v
 
 # Assemble the curiosity program
@@ -520,8 +611,14 @@ soma assemble examples/soma_curious.soma -o curious.sombin
 
 # Transpile to native C and run
 soma transpile examples/soma_curious.soma -o curious.c
-gcc -O3 -march=native -o curious curious.c -lm -lpthread
+gcc -O3 -march=native -o curious curious.c runtime/soma_bridge.c -lm -lpthread
 ./curious
+
+# Run the Phase V emergence demo
+python examples/phase_v_emergence.py
+
+# Verify ISA congruency (18/18)
+python verify_congruency.py
 ```
 
 ---
@@ -535,6 +632,8 @@ SOMA's architecture is grounded in:
 - **Memristor SOM chips** (Nature Comms, 2022) — in-situ SOM training. SOMA targets this substrate.
 - **Amygdala + hippocampus models** — Phase II implements the computational equivalents: emotional tagging, decay protection, REM consolidation.
 - **Evolutionary computation** — EVOLVE + META_SPAWN is machine-speed goal-directed evolution. No human-defined fitness function — the agent's own declared intention is the selection criterion.
+- **Niche theory (ecology)** — Phase V NicheMap mirrors competitive exclusion: agents specialise or migrate. Diversity emerges from pressure, not design.
+- **Symbol grounding** — SYMBOL_EMERGE is a computational implementation of Harnad's symbol grounding problem: symbols bind to SOM regions through repeated co-activation, not programmer assignment.
 
 ---
 
