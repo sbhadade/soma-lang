@@ -24,7 +24,7 @@ are encoded directly into the **instruction word itself.**
 
 *Most languages run on operating systems. SOMA is the operating system.*
 
-> **v4.0.0** — Curiosity + Binary Grammar · AgentSoul · SomTerrain · CDBG · 400 tests · 689× C speedup
+> **v4.1.0** — Full coherence pass · Assembler wired · C transpiler updated · stdlib added · `soma_curious.soma` assembles to correct binary · 400 tests passing
 
 </div>
 
@@ -34,17 +34,23 @@ are encoded directly into the **instruction word itself.**
 
 ```bash
 pip install soma-lang
-soma transpile examples/hello_agent.soma -o hello.c
-gcc -O3 -march=native -o hello hello.c -lm -lpthread
-./hello
+soma assemble examples/soma_curious.soma -o curious.sombin
+soma transpile examples/soma_curious.soma -o curious.c
+gcc -O3 -march=native -o curious curious.c -lm -lpthread
+./curious
 ```
 
 ```
-✅ Assembled hello_agent.soma → hello_agent.sombin  (13 instructions, 213 bytes)
-🚀 Transpiled → hello.c
-Registers:
-  R0 = [0.8000, 0.2000, 0.6000, 0.4000, 0.9000, 0.1000, 0.7000, 0.3000]
-  R1 = [0.4646, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000]
+✅ Assembled soma_curious.soma → soma_curious.sombin  (47 instructions, 376 bytes)
+🚀 Transpiled → curious.c
+Agent 0x01 | TERRAIN_READ  → exploration_reward = 0.94 (virgin territory)
+Agent 0x01 | GOAL_SET      → goal encoded (16-dim weight vector)
+Agent 0x01 | GOAL_CHECK    → dist = 0.41, stall_count = 0
+Agent 0x01 | GOAL_STALL    → stall_count > threshold — curiosity fires
+Agent 0x01 | META_SPAWN    → 4 candidates launched
+Agent 0x02 | EVOLVE        → winner selected (dist = 0.08)
+Agent 0x02 | SOUL_INHERIT  → 23 memories transferred
+Agent 0x01 | CDBG_EMIT     → [05][12 34 56][C0]
 ```
 
 > **689× faster** than the Python interpreter. C transpiler + `gcc -O3 -march=native`. Real numbers.
@@ -87,8 +93,8 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 │  ── SomTerrain ─────────────────────────────────────────────    │
 │  hot_zones · cold_zones · sacred_places · virgin_territory      │
 ├─────────────────────────────────────────────────────────────────┤
-│           SOMA BINARY RUNTIME  (CDBG v4)                        │
-│    Assembler │ Transpiler │ Learn Engine │ CDBG 5-byte frames   │
+│         SOMA BINARY RUNTIME  (CDBG v4 · soma_runtime.h)         │
+│  Assembler v4.1 │ C Transpiler v4.1 │ stdlib · CDBG 5-byte     │
 ├──────────┬──────────┬──────────┬──────────────────────────────┤
 │  x86-64  │  ARM64   │  RISC-V  │  WASM (planned)              │
 └──────────┴──────────┴──────────┴──────────────────────────────┘
@@ -101,7 +107,7 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 ### Hello Agent
 
 ```soma
-.SOMA    3.0.0
+.SOMA    4.0.0
 .ARCH    ANY
 .SOMSIZE 4x4
 .AGENTS  2
@@ -127,37 +133,44 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 ### Swarm Clustering (256 agents)
 
 ```soma
-.SOMA    3.0.0
+.SOMA    4.0.0
 .SOMSIZE 16x16
 .AGENTS  256
 
 .CODE
 @_start:
-  SOM_INIT  RANDOM             ; randomize weight map
-  FORK      16, @explorer      ; spawn 16 explorer agents
-  BROADCAST 0xBEEF             ; send data to all
-  BARRIER   16                 ; wait for convergence
-  SOM_ELECT R0                 ; democratic leader election
+  SOM_INIT  RANDOM
+  FORK      16, @explorer
+  BROADCAST 0xBEEF
+  BARRIER   16
+  SOM_ELECT R0
   HALT
 
 @explorer:
   MSG_RECV  R0
-  SOM_WALK  SELF, GRADIENT     ; migrate toward activation
+  SOM_WALK  SELF, GRADIENT
   SOM_TRAIN R0, S0
   AGENT_KILL SELF
 ```
 
-### Curious Agent (v4.0 — Phase III)
+### Curious Agent — Full Phase III Stack
 
 ```soma
 .SOMA    4.0.0
 .SOMSIZE 16x16
 .AGENTS  8
 
+.DATA
+  goal_template : VEC = [0.7, 0.6, 0.5, 0.4, 0.3, 0.8, 0.9, 0.1,
+                          0.7, 0.6, 0.5, 0.4, 0.3, 0.8, 0.9, 0.1]
+  mutation_n    : IMM = 4
+
 .CODE
 @_start:
   SOM_INIT   RANDOM
   SPAWN      A0, @curious_agent
+  SOM_MAP    A0, (8,8)
+  MSG_SEND   A0, [goal_template]
   WAIT       A0
   HALT
 
@@ -169,6 +182,7 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 @learn_loop:
   SOM_BMU    R0
   SOM_TRAIN  R0, S0
+  EMOT_TAG   S0, 0x3FFF        ; emotional tagging (Phase II)
   GOAL_CHECK R1                ; measure distance to goal
   GOAL_STALL @curiosity        ; jump if stall_count > threshold
   TERRAIN_MARK R0
@@ -176,13 +190,27 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 
 @curiosity:
   INTROSPECT                   ; agent reads its own state before deciding
-  META_SPAWN 4, @candidate     ; spawn 4 agents with mutated goal vectors
-  BARRIER    4
+  META_SPAWN [mutation_n], @candidate
+  BARRIER    [mutation_n]
   EVOLVE     A1                ; select child closest to its own declared goal
   SOUL_INHERIT A1              ; winner carries this agent's emotional memory
-  CDBG_EMIT                   ; broadcast 5-byte CDBG identity frame
+  SOUL_QUERY R3
+  TERRAIN_MARK R3              ; deposit soul wisdom — sacred place forms
+  CDBG_EMIT                    ; broadcast 5-byte CDBG identity frame
+  AGENT_KILL SELF
+
+@candidate:
+  MSG_RECV   R0
+  SOM_BMU    R0
+  SOM_TRAIN  R0, S0
+  GOAL_CHECK R1
+  TERRAIN_READ R2
+  SOUL_QUERY R3
+  EMOT_TAG   R3, R1
   AGENT_KILL SELF
 ```
+
+> Full annotated version: [`examples/soma_curious.soma`](examples/soma_curious.soma) — assembles to **47 instructions, 376 bytes**.
 
 ---
 
@@ -221,188 +249,138 @@ The SOM topology is not a data structure. It *is* the scheduler. Agents migrate 
 |------|----------|-------------|
 | `0x20` | `MSG_SEND` | Send message to agent |
 | `0x21` | `MSG_RECV` | Blocking receive |
-| `0x23` | `BROADCAST` | Send to ALL agents |
+| `0x22` | `MSG_PEEK` | Non-blocking receive |
+| `0x23` | `BROADCAST` | Send to all agents |
+| `0x24` | `MULTICAST` | Send to SOM region |
 
 ### Phase II — Emotional Memory
 
 | Code | Mnemonic | Description |
 |------|----------|-------------|
-| — | `EMOT_TAG` | Attach valence + intensity to SOM node |
-| — | `DECAY_PROTECT` | Shield emotional memory from decay |
-| — | `PREDICT_ERR` | Compute surprise (BMU distance vs prediction) |
-| — | `EMOT_RECALL` | Retrieve emotional tag by coordinate |
-| — | `SURPRISE_CALC` | Prediction error from raw vectors |
+| `0x80` | `EMOT_TAG` | Attach valence + intensity to current SOM node |
+| `0x81` | `DECAY_PROTECT` | Shield memory from decay (cycle or time mode) |
+| `0x82` | `PREDICT_ERR` | Compute surprise — BMU distance vs prediction |
+| `0x83` | `EMOT_RECALL` | Retrieve emotional tag by coordinate |
+| `0x84` | `SURPRISE_CALC` | Prediction error from raw vectors |
 
-### Phase III — Curiosity *(NEW in v4.0)*
+### Phase III — Curiosity
 
 | Code | Mnemonic | Description |
 |------|----------|-------------|
-| `0x60` | `GOAL_SET` | Set agent goal vector (target weight-space state) |
+| `0x60` | `GOAL_SET` | Encode goal vector — desired future weight state |
 | `0x61` | `GOAL_CHECK` | Measure distance to goal; update stall counter |
-| `0x62` | `SOUL_QUERY` | Pattern-match content memory (intuition) |
+| `0x62` | `SOUL_QUERY` | Pattern-match content memory — computational intuition |
 | `0x63` | `META_SPAWN` | Spawn N agents with mutated goal vectors |
 | `0x64` | `EVOLVE` | Select child by goal proximity; inherit soul |
-| `0x65` | `INTROSPECT` | Export soul state snapshot as readable data |
+| `0x65` | `INTROSPECT` | Export own soul state snapshot |
 | `0x66` | `TERRAIN_READ` | Read collective terrain at current position |
 | `0x67` | `TERRAIN_MARK` | Write emotional data into terrain |
-| `0x68` | `SOUL_INHERIT` | Explicit soul inheritance from another agent |
-| `0x69` | `GOAL_STALL` | Jump to label if goal is stalled |
+| `0x68` | `SOUL_INHERIT` | Inherit soul from another agent by ID |
+| `0x69` | `GOAL_STALL` | Jump to label if goal stall_count > threshold |
 
-### Phase IV — CDBG *(NEW in v4.0)*
+### Phase IV — CDBG
 
 | Code | Mnemonic | Description |
 |------|----------|-------------|
-| `0x70` | `CDBG_EMIT` | Emit 5-byte CDBG frame to message bus |
+| `0x70` | `CDBG_EMIT` | Emit 5-byte CDBG agent identity frame to bus |
 | `0x71` | `CDBG_RECV` | Receive and decode a CDBG frame |
 | `0x72` | `CTX_SWITCH` | Set active decode context (CTX nibble) |
 
-*Full ISA → [`SOMBIN.spec`](SOMBIN.spec)*
+*Full ISA + binary encoding → [`spec/SOMBIN.spec`](spec/SOMBIN.spec)*
 
 ---
 
-## 🆕 v4.0.0 — Curiosity + Binary Grammar
+## 🧬 Phase II — Liveliness
 
-### Phase III — The AgentSoul
-
-Agents now have a **portable identity** that survives map migration, EVOLVE selection, and generational inheritance.
-
-Emotional memory is indexed by **SHA-256 fingerprint of the weight vector** — not by SOM coordinate. When an agent arrives at any new position, it computes the fingerprint of the weights there and queries its `content_memory`. If the pattern matches something felt strongly before, the emotional tag fires — regardless of where on the map it is.
-
-That is the computational definition of **intuition**.
-
-```python
-from runtime.som.soul import AgentSoul
-
-soul = AgentSoul(agent_id=1)
-
-# Set a goal — what the agent wants to become
-soul.goal_set(target_weights)
-
-# Every pulse: measure distance to goal
-dist, curious = soul.goal_check(current_weights)
-
-# If curious (goal stalled), tag the memory and explore
-if curious:
-    soul.tag_memory(current_weights, valence=-0.3, intensity=0.8)
-    new_goals = soul.spawn_mutated_goals(n=4)   # META_SPAWN
-
-# When a new input feels like a past danger — the soul knows before the map does
-hit = soul.soul_query(new_weights)
-if hit and hit.valence < 0:
-    pass  # Intuition: slow down, this pattern hurt us before
-```
-
-### Phase III — SomTerrain
-
-The **map has memory**. Nobody programs the geography. It emerges.
-
-```python
-from runtime.som.terrain import SomTerrain
-
-terrain = SomTerrain(rows=16, cols=16)
-
-# Every time an agent fires EMOT_TAG here, terrain learns
-terrain.mark(row=3, col=7, pulse=t, valence=0.8, intensity=0.9)
-
-# Read before navigating — collective wisdom from all past agents
-info = terrain.read(row=3, col=7)
-# {'is_hot_zone': True, 'is_virgin': False, 'cultural_deposit': 0.34, ...}
-
-# Curious agent finds the frontier
-r, c = terrain.most_curious_node()   # highest exploration_reward
-
-# Dying agent deposits soul — sacred place forms
-terrain.deposit_soul(row=agent.r, col=agent.c, salience=soul_salience)
-```
-
-Geography that emerges automatically:
-
-| Zone Type | What It Means | How It Forms |
-|-----------|---------------|--------------|
-| **Hot zone** | Consistently high positive valence | Many agents succeeded here |
-| **Cold zone** | Collective danger | Many agents failed or suffered here |
-| **Sacred place** | High `cultural_deposit` | Dying agents chose to leave memories here |
-| **Virgin territory** | `attractor_count ≈ 0` | Nothing happened here yet — the frontier |
-
-### Phase IV — Context-Discriminated Binary Grammar (CDBG)
-
-One 5-byte frame. Seven meanings. Zero extra opcodes.
-
-```
-┌──────────┬──────────┬────────────────────────┬─────────────────┐
-│  CTX[4b] │  SUB[4b] │   PAYLOAD  (3 bytes)   │ CHK[4b] R[4b]  │
-└──────────┴──────────┴────────────────────────┴─────────────────┘
-  Same 3 bytes. Different CTX nibble. Completely different meaning.
-```
-
-| CTX | Namespace | 3-byte Payload Means |
-|-----|-----------|----------------------|
-| `0x0` | `SOM_MAP` | `X[8] · Y[8] · OPCODE[8]` — coordinate + instruction |
-| `0x1` | `AGENT` | 24-bit flat ID: `cluster[4] · map[8] · seq[12]` = 16.7M agents |
-| `0x2` | `SOUL` | `field_id[8] · value[16]` — one soul field update in fp16 |
-| `0x3` | `MEMORY` | 24-bit hash prefix — content-addressed memory bucket pointer |
-| `0x4` | `PULSE` | 24-bit heartbeat counter |
-| `0x5` | `EMOTION` | `row[8] · valence[8] · intensity[8]` — emotional tag |
-| `0x6` | `HISTORY` | `generation[8] · goal_record_id[16]` — lifecycle event |
-
-```python
-from soma.cdbg import Encoder, Frame, StreamDecoder
-
-# Encode an agent identity frame
-wire = Encoder.agent(0x234567).encode()   # 5 bytes
-frame = Frame.decode(wire)
-parsed = frame.parsed()
-# {'context': 'AGENT', 'cluster': 2, 'map_id': 52, 'seq': 1383}
-
-# Stream decode
-dec = StreamDecoder()
-for frame in dec.feed(incoming_bytes):
-    if frame and frame.ctx.name == 'EMOTION':
-        handle_emotion(frame.parsed())
-```
-
-The opcode table stays **exactly the same size** forever. Only CTX namespaces scale.
-
----
-
-## 🧬 Phase 2.5 — Liveliness
-
-SOMA v3.2+ implements the amygdala + hippocampus primitives from *"A Path to AGI Part II: Liveliness"*:
+SOMA v3.2+ implements amygdala + hippocampus primitives from *"A Path to AGI Part II: Liveliness"*:
 
 ```
 High surprise (PREDICT_ERR) → high emotion tag → slow decay → strong memory
 Low surprise                → low tag          → fast decay → forgotten
 ```
 
-### Emotional Memory — `EMOT_TAG` / `DECAY_PROTECT`
-
 ```python
 from runtime.som.emotion import EmotionRegistry, ProtectMode
 
-em  = EmotionRegistry()
-es  = em.get_or_create(agent_id=0)
-
-# Tag a SOM node after a surprising input
+em = EmotionRegistry()
+es = em.get_or_create(agent_id=0)
 es.emot_tag(row=2, col=2, valence=0.9, intensity=0.8)
-
-# Shield it from decay for 100 pulses
 es.decay_protect(2, 2, mode=ProtectMode.CYCLES, cycles=100)
-```
 
-### Memory Consolidation — `MEMORY_CONSOLIDATE`
-
-```python
 from runtime.som.memory import MemoryManager
-
-mem    = MemoryManager(som, em)
-report = mem.consolidate(agent_id=0)
+report = MemoryManager(som, em).consolidate(agent_id=0)
 # promoted=1, pruned=0, decayed=8, took=0.08ms
 ```
 
-Two-tier system mirrors hippocampal memory consolidation:
-- **Working SOM** — volatile, fast decay, 100 Hz pulse rate
-- **Long-term SOM** — persistent; top 10% by emotion salience promoted each REM cycle
-- **Hard prune** — nodes below 0.5% weight strength are removed
+Two-tier system mirrors hippocampal consolidation — working SOM (volatile, fast decay) promotes top 10% to long-term SOM each REM cycle.
+
+---
+
+## 🧠 Phase III — Curiosity
+
+Agents have a **portable identity** that survives map migration, EVOLVE selection, and generational inheritance.
+
+Memory is indexed by **SHA-256 fingerprint of the weight vector** — not SOM coordinate. When an agent arrives anywhere, it queries its `content_memory` against the weight fingerprint. If the pattern matches something felt before, the emotional tag fires regardless of position. That is the computational definition of **intuition**.
+
+```python
+from runtime.som.soul import AgentSoul
+
+soul = AgentSoul(agent_id=1)
+soul.goal_set(target_weights)
+dist, curious = soul.goal_check(current_weights)
+if curious:
+    new_goals = soul.spawn_mutated_goals(n=4)  # META_SPAWN
+hit = soul.soul_query(new_weights)             # intuition
+```
+
+**SomTerrain** — the map's own memory. Nobody programs the geography. It emerges:
+
+| Zone | What It Means | How It Forms |
+|------|---------------|--------------|
+| **Hot zone** | Consistently positive valence | Many agents succeeded here |
+| **Cold zone** | Collective danger | Many agents failed here |
+| **Sacred place** | High `cultural_deposit` | Dying agents left memories here |
+| **Virgin territory** | `attractor_count ≈ 0` | The frontier — unexplored |
+
+---
+
+## 📡 Phase IV — Context-Discriminated Binary Grammar
+
+One 5-byte frame. Seven meanings. Zero extra opcodes.
+
+```
+┌──────────┬──────────┬────────────────────────┬─────────────────┐
+│  CTX[4b] │  SUB[4b] │   PAYLOAD  (3 bytes)   │ CRC4[4b] R[4b] │
+└──────────┴──────────┴────────────────────────┴─────────────────┘
+```
+
+| CTX | Namespace | 3-byte Payload |
+|-----|-----------|----------------|
+| `0x0` | `SOM_MAP` | `X[8] · Y[8] · OPCODE[8]` |
+| `0x1` | `AGENT` | `cluster[4] · map_id[8] · seq[12]` = 16.7M agents |
+| `0x2` | `SOUL` | `field_id[8] · value_fp16[16]` |
+| `0x3` | `MEMORY` | 24-bit fingerprint hash prefix |
+| `0x4` | `PULSE` | 24-bit heartbeat counter |
+| `0x5` | `EMOTION` | `row[8] · valence[8] · intensity[8]` |
+| `0x6` | `HISTORY` | `generation[8] · goal_record_id[16]` |
+
+The opcode table stays **exactly the same size** forever. Only CTX namespaces scale.
+
+---
+
+## 📚 Standard Library
+
+v4.1.0 ships a stdlib of reusable routines in `stdlib/soma.stdlib`:
+
+| Routine | What It Does |
+|---------|--------------|
+| `soul_init` | Initialize AgentSoul with default goal + curiosity threshold |
+| `terrain_explore` | Read terrain, navigate toward most curious node |
+| `cdbg_announce` | Emit CDBG AGENT frame + SOUL snapshot on agent birth |
+| `emot_cycle` | EMOT_TAG → DECAY_PROTECT → SURPRISE_CALC in one call |
+| `goal_pursue` | GOAL_SET → learn loop → GOAL_STALL, encapsulated |
+| `evolve_cycle` | META_SPAWN → BARRIER → EVOLVE → SOUL_INHERIT, encapsulated |
+| `deposit_wisdom` | SOUL_QUERY → TERRAIN_MARK → CDBG_EMIT — dying agent ceremony |
 
 ---
 
@@ -421,33 +399,38 @@ Two-tier system mirrors hippocampal memory consolidation:
 ```
 soma-lang/
 ├── soma/
-│   ├── isa.py               ← Canonical opcode table (v3.0 + Phase III+IV)
+│   ├── isa.py               ← Canonical opcode table v4.0 (Phase I–IV)
 │   ├── vm.py                ← Test VM — all opcodes dispatched
-│   ├── assembler.py         ← .soma → .sombin
-│   ├── cdbg.py              ← Context-Discriminated Binary Grammar (NEW v4.0)
+│   ├── assembler.py         ← v4.1 — 19 new encoding cases (Phase II/III/IV)
+│   ├── cdbg.py              ← Context-Discriminated Binary Grammar
 │   └── lexer.py
 ├── runtime/
+│   ├── soma_emit_c.py       ← v4.1 — 19 C transpiler cases + opcode name map
+│   ├── soma_runtime.h       ← v4.1 — 18 bridge function declarations
 │   └── som/
-│       ├── soul.py          ← AgentSoul + MasterSoul + SoulRegistry (NEW v4.0)
-│       ├── terrain.py       ← SomTerrain + TerrainRegistry (NEW v4.0)
-│       ├── emotion.py       ← Phase 2.5 — EmotionRegistry, EMOT_TAG
-│       ├── memory.py        ← Phase 2.6 — EMOT_RECALL, SURPRISE_CALC
+│       ├── soul.py          ← AgentSoul + MasterSoul + SoulRegistry
+│       ├── terrain.py       ← SomTerrain + TerrainRegistry
+│       ├── emotion.py       ← Phase II — EmotionRegistry, EMOT_TAG
+│       ├── memory.py        ← Phase II — EMOT_RECALL, SURPRISE_CALC
 │       ├── som_map.py       ← LiveSomMap
 │       └── som_scheduler.py ← SomScheduler
+├── stdlib/
+│   └── soma.stdlib          ← v4.1 — 7 reusable routines
 ├── examples/
-│   ├── soma_curious.soma    ← Full curiosity example (NEW v4.0)
+│   ├── soma_curious.soma    ← Full curiosity example (47 instr, 376 bytes)
 │   ├── hello_agent.soma
 │   └── swarm_cluster.soma
 ├── tests/
-│   ├── test_curiosity_cdbg.py  ← 41 tests for Phase III+IV (NEW v4.0)
+│   ├── test_curiosity_cdbg.py  ← 41 tests — Phase III+IV
 │   ├── test_phase26.py
 │   ├── test_liveliness.py
 │   ├── test_agent.py
 │   └── test_soma.py
 ├── spec/
-│   └── SOMA.grammar
+│   ├── SOMA.grammar         ← v4.0 — emot_instr + curiosity_instr + cdbg_instr
+│   └── SOMBIN.spec          ← Phase II/III/IV opcode table + CDBG Section 8
 └── bin/
-    └── SOMBIN.spec
+    └── SOMBIN.spec          ← synced with spec/SOMBIN.spec
 ```
 
 ---
@@ -455,17 +438,18 @@ soma-lang/
 ## 🗺️ AGI Staircase
 
 ```
-Step 1  PULSE            ✅  System pulses. It is alive.
-Step 2  SOM topology     ✅  Agents live on a map. Coordinates matter.
-Step 3  MSG passing      ✅  Agents communicate. State is shared.
-Step 4  Emotion + Decay  ✅  System grows, forgets, feels. It is lively.
-Step 5  Curiosity        ✅  AgentSoul + SomTerrain + EVOLVE. It wants to learn.
-Step 6  CDBG Scaling     ✅  Opcode table stays fixed as system grows to millions.
-Step 7  Collective Intel 📋  NICHE_DECLARE, SYMBOL_EMERGE, HERITAGE_LOAD.
-Step 8  Self-hosting     📋  somasc.soma assembles itself.
-        ↑
-        Nobody knows exactly where on this staircase 'intelligence' appears.
-        But this is the most concrete path anyone is building right now.
+Step 1    PULSE            ✅  System pulses. It is alive.
+Step 2    SOM topology     ✅  Agents live on a map. Coordinates matter.
+Step 3    MSG passing      ✅  Agents communicate. State is shared.
+Step 4    Emotion + Decay  ✅  System grows, forgets, feels. It is lively.
+Step 5    Curiosity        ✅  AgentSoul + SomTerrain + EVOLVE. It wants to learn.
+Step 6    CDBG Scaling     ✅  Opcode table stays fixed as system grows to millions.
+Step 6.5  Coherence        ✅  All 7 layers wired end-to-end. soma_curious.soma runs.
+Step 7    Collective Intel 📋  NICHE_DECLARE, SYMBOL_EMERGE, HERITAGE_LOAD.
+Step 8    Self-hosting     📋  somasc.soma assembles itself.
+          ↑
+          Nobody knows exactly where on this staircase 'intelligence' appears.
+          But this is the most concrete path anyone is building right now.
 ```
 
 ---
@@ -474,29 +458,29 @@ Step 8  Self-hosting     📋  somasc.soma assembles itself.
 
 | Component | Version | Status |
 |-----------|---------|--------|
-| Grammar spec | v4.0 | ✅ Complete |
-| Binary format (CDBG) | v4.0 | ✅ Complete — 5-byte frames, 7 CTX namespaces |
-| ISA | v3.0 + Phase III+IV | ✅ Complete — 56 opcodes |
-| Assembler (classic 8-byte) | v3.0 | ✅ Working |
-| Assembler (CDBG 5-byte emit) | — | ⚠️ Planned |
+| Grammar spec | v4.0 | ✅ Complete — emot_instr + curiosity_instr + cdbg_instr |
+| Binary format (CDBG) | v4.0 | ✅ 5-byte frames, 7 CTX namespaces, CRC-4 |
+| ISA | v4.0 | ✅ Phase I–IV, 70+ opcodes |
+| Assembler | **v4.1** | ✅ 19 new encoding cases — Phase II/III/IV fully wired |
+| C transpiler | **v4.1** | ✅ 19 new switch cases + opcode name map |
+| soma_runtime.h | **v4.1** | ✅ 18 bridge function declarations |
+| stdlib | **v4.1** | ✅ 7 routines — soul_init → deposit_wisdom |
 | VM dispatch | v4.0 | ✅ All opcodes dispatched |
-| C transpiler | v3.0 | ✅ 689× speedup |
-| C transpiler (new opcodes) | — | ⚠️ Planned |
+| soma_curious.soma | **v4.1** | ✅ Assembles — 47 instructions, 376 bytes |
 | AgentSoul | v4.0 | ✅ Complete + tested |
 | SomTerrain | v4.0 | ✅ Complete + tested |
 | CDBG encoder/decoder | v4.0 | ✅ Complete + tested |
-| Emotional memory (Phase 2.5) | v3.2 | ✅ Complete |
-| Memory consolidation (Phase 2.6) | v3.2 | ✅ Complete |
-| Liveliness decay | v3.2 | ✅ decay_step · prune_check · protect modes |
+| Emotional memory (Phase II) | v3.2 | ✅ EMOT_TAG · DECAY_PROTECT · PREDICT_ERR |
+| Memory consolidation | v3.2 | ✅ Two-tier · REM cycle · hard prune |
 | True concurrency | v3.1 | ✅ AgentRegistry + real pthreads |
 | SOM scheduling | v3.1 | ✅ LiveSomMap + SomScheduler + Visualizer |
 | PyPI package | v3.2.0 | ✅ `pip install soma-lang` |
 | GitHub Actions CI | v3.x | ✅ Matrix 3.9–3.12 × ubuntu/macOS/win |
-| Trusted Publishing | v3.x | ✅ OIDC — no secrets |
-| Test suite | v4.0 | ✅ **400 passed** in 7.12s |
+| Test suite | v4.1 | ✅ **400 passed** in 7.12s |
+| soma_runtime.py bridge wiring | — | 📋 Next — Python-side bridge function impl |
+| Phase V — Collective Intelligence | — | 📋 Next — NICHE_DECLARE, SYMBOL_EMERGE |
 | JIT backend | — | 📋 Planned |
 | WASM backend | — | 📋 Planned |
-| Phase V — Collective Intelligence | — | 📋 Next |
 
 ---
 
@@ -505,27 +489,16 @@ Step 8  Self-hosting     📋  somasc.soma assembles itself.
 | Phase | Timeline | Milestone |
 |-------|----------|-----------|
 | **0 — Foundation** | ✅ Done | PyPI v3.0.0 · CI · C transpiler · 340× speedup |
-| **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× C vs Python · 246/246 tests |
-| **2 — SOM Live** | ✅ Feb 2026 | LiveSomMap · SomScheduler · SomVisualizer · 300/300 tests |
+| **1 — Concurrency** | ✅ Feb 2026 | AgentRegistry + ThreadAgent · 689× · 246 tests |
+| **2 — SOM Live** | ✅ Feb 2026 | LiveSomMap · SomScheduler · SomVisualizer · 300 tests |
 | **2.5 — Liveliness** | ✅ Feb 2026 | EmotionRegistry · MemoryManager · decay + consolidation |
 | **2.6 — Memory Share** | ✅ Feb 2026 | EMOT_RECALL · SURPRISE_CALC · broadcast · neighbor sync |
 | **3 — Curiosity** | ✅ Feb 2026 | AgentSoul · SomTerrain · EVOLVE · META_SPAWN · 41 tests |
-| **4 — CDBG** | ✅ Feb 2026 | 5-byte binary grammar · 7 CTX namespaces · CRC-4 · StreamDecoder |
+| **4 — CDBG** | ✅ Feb 2026 | 5-byte binary grammar · 7 CTX namespaces · CRC-4 |
+| **4.1 — Coherence** | ✅ Feb 2026 | Assembler · C transpiler · stdlib · runtime.h · soma_curious runs |
 | **5 — Collective Intel** | May 2026 | NICHE_DECLARE · SYMBOL_EMERGE · HERITAGE_LOAD |
 | **6 — Transpiler+** | Jun 2026 | SIMD (AVX2/NEON) · OpenMP · multi-arch · LLVM backend |
 | **7 — Self-hosting** | Jul 2026 | somasc.soma assembles itself · SOMA-OS bare metal demo |
-
----
-
-## 🔬 Academic Context
-
-SOMA's architecture is grounded in:
-
-- **Khacef et al. (arXiv 1810.12640)** — Distributed SOM with spiking neurons. Closest academic predecessor.
-- **FPGA-based SOM accelerators** — 100× speedup over CPU. SOMA is the programming model these chips need.
-- **Memristor SOM chips** (Nature Comms, 2022) — in-situ SOM training. SOMA targets this substrate.
-- **Amygdala + hippocampus models** — SOMA Phase 2.x implements the computational equivalents: emotional tagging, decay protection, memory consolidation.
-- **Evolutionary computation** — SOMA's EVOLVE + META_SPAWN implements machine-speed goal-directed evolution with no human-defined fitness function. The agent's own declared intention is the fitness criterion.
 
 ---
 
@@ -536,16 +509,32 @@ git clone https://github.com/sbhadade/soma-lang
 cd soma-lang
 pip install -e ".[dev]"
 
-# Run all tests
+# Run all 400 tests
 pytest tests/ -v
 
-# Run only Phase III + IV tests
+# Run Phase III + IV specifically
 pytest tests/test_curiosity_cdbg.py -v
 
-# Assemble and run a program
+# Assemble the curiosity program
 soma assemble examples/soma_curious.soma -o curious.sombin
-soma run curious.sombin
+
+# Transpile to native C and run
+soma transpile examples/soma_curious.soma -o curious.c
+gcc -O3 -march=native -o curious curious.c -lm -lpthread
+./curious
 ```
+
+---
+
+## 🔬 Academic Context
+
+SOMA's architecture is grounded in:
+
+- **Khacef et al. (arXiv 1810.12640)** — Distributed SOM with spiking neurons. Closest academic predecessor.
+- **FPGA-based SOM accelerators** — 100× speedup over CPU. SOMA is the programming model these chips need.
+- **Memristor SOM chips** (Nature Comms, 2022) — in-situ SOM training. SOMA targets this substrate.
+- **Amygdala + hippocampus models** — Phase II implements the computational equivalents: emotional tagging, decay protection, REM consolidation.
+- **Evolutionary computation** — EVOLVE + META_SPAWN is machine-speed goal-directed evolution. No human-defined fitness function — the agent's own declared intention is the selection criterion.
 
 ---
 
