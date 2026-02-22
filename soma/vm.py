@@ -139,6 +139,10 @@ class SomaVM:
         root = self._spawn_agent(pc=0, parent_id=None)
         self._entry_pc = 0
 
+        # Phase III: soul and terrain registries (lazy dicts)
+        self._soul_registry: dict = {}   # agent_id → AgentSoul
+        self._terrain:       object = None  # SomTerrain (created on demand)
+
     def _spawn_agent(self, pc: int, parent_id: Optional[int]) -> AgentState:
         aid = self._next_id
         self._next_id += 1
@@ -431,7 +435,123 @@ class SomaVM:
         elif opcode == O["STORE"]:
             pass  # read-only binary
 
+        # ── Phase III: Curiosity opcodes ──────────────────────────────────────
+
+        elif opcode == O["GOAL_SET"]:
+            goal = [float(agent.R[i]) for i in range(self.som.dims)]
+            soul = self._get_soul(agent.agent_id)
+            soul.goal_set(goal)
+            agent.log.append(f"GOAL_SET generation={soul.generation}")
+
+        elif opcode == O["GOAL_CHECK"]:
+            soul    = self._get_soul(agent.agent_id)
+            weights = self.som.nodes[agent.som_x][agent.som_y].weights
+            dist, curious = soul.goal_check(weights)
+            self._set_reg(agent, reg, int(dist * 65535))
+            agent.zero_flag = curious
+
+        elif opcode == O["SOUL_QUERY"]:
+            soul    = self._get_soul(agent.agent_id)
+            weights = self.som.nodes[agent.som_x][agent.som_y].weights
+            entry   = soul.soul_query(weights)
+            if entry is not None:
+                self._set_reg(agent, reg, int(entry.salience * 65535))
+                agent.zero_flag = entry.valence < 0.0
+            else:
+                self._set_reg(agent, reg, 0)
+
+        elif opcode == O["META_SPAWN"]:
+            n         = max(1, enc_agent_id if enc_agent_id > 0 else imm & 0xFF)
+            target_pc = imm
+            soul      = self._get_soul(agent.agent_id)
+            mutations = soul.spawn_mutated_goals(n)
+            for goal in mutations:
+                child      = self._spawn_agent(pc=target_pc, parent_id=agent.agent_id)
+                child_soul = self._get_soul(child.agent_id)
+                child_soul.inherit_from(soul, weight=0.8)
+                child_soul.goal_set(goal)
+
+        elif opcode == O["EVOLVE"]:
+            children = [
+                ag for ag in self.agents.values()
+                if ag.parent_id == agent.agent_id
+                and ag.state != AgentState.DEAD
+            ]
+            if children:
+                def _goal_dist(ag):
+                    s = self._soul_registry.get(ag.agent_id)
+                    if s is None or s.goal_vector is None:
+                        return 1.0
+                    w = self.som.nodes[ag.som_x][ag.som_y].weights
+                    d, _ = s.goal_check(w)
+                    return d
+                winner = min(children, key=_goal_dist)
+                self._set_reg(agent, reg, winner.agent_id)
+                winner_soul = self._get_soul(winner.agent_id)
+                parent_soul = self._get_soul(agent.agent_id)
+                winner_soul.inherit_from(parent_soul, weight=0.9)
+
+        elif opcode == O["INTROSPECT"]:
+            soul     = self._get_soul(agent.agent_id)
+            snapshot = soul.introspect()
+            self._output.append(f"[A{agent.agent_id}] introspect={snapshot}")
+
+        elif opcode == O["TERRAIN_READ"]:
+            terrain = self._get_terrain()
+            info    = terrain.read(agent.som_x, agent.som_y)
+            self._set_reg(agent, reg, int(info["exploration_reward"] * 65535))
+            agent.zero_flag = info["is_virgin"]
+
+        elif opcode == O["TERRAIN_MARK"]:
+            soul    = self._get_soul(agent.agent_id)
+            terrain = self._get_terrain()
+            terrain.mark(agent.som_x, agent.som_y,
+                         pulse=int(agent.S[2]),
+                         valence=soul.valence_mean,
+                         intensity=min(1.0, soul.curiosity_drive + 0.3))
+
+        elif opcode == O["GOAL_STALL"]:
+            soul = self._get_soul(agent.agent_id)
+            if soul.goal_stall_count > soul.STALL_THRESHOLD:
+                agent.pc = imm
+
+        elif opcode == O["SOUL_INHERIT"]:
+            parent_id   = self._get_reg(agent, reg)
+            parent_soul = self._get_soul(parent_id)
+            this_soul   = self._get_soul(agent.agent_id)
+            this_soul.inherit_from(parent_soul, weight=0.8)
+
+        elif opcode == O["CDBG_EMIT"]:
+            from soma.cdbg import Encoder
+            frame = Encoder.agent(agent.agent_id).encode()
+            self._output.append(f"[CDBG] {frame.hex()}")
+
+        elif opcode == O["CDBG_RECV"]:
+            from soma.cdbg import Frame as CDBGFrame
+            if agent.inbox:
+                raw = agent.inbox.popleft()
+                if isinstance(raw, bytes) and len(raw) == 5:
+                    try:
+                        f = CDBGFrame.decode(raw)
+                        agent.log.append(f"CDBG_RECV ctx={f.ctx.name}")
+                    except ValueError:
+                        pass
+
         return False  # not halted
+
+    # ── Phase III helpers ──────────────────────────────────────────────────────
+
+    def _get_soul(self, agent_id: int):
+        if agent_id not in self._soul_registry:
+            from runtime.som.soul import AgentSoul
+            self._soul_registry[agent_id] = AgentSoul(agent_id)
+        return self._soul_registry[agent_id]
+
+    def _get_terrain(self):
+        if self._terrain is None:
+            from runtime.som.terrain import SomTerrain
+            self._terrain = SomTerrain(self.som.rows, self.som.cols)
+        return self._terrain
 
     @property
     def output(self) -> List[str]:

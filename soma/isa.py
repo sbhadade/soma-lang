@@ -86,6 +86,23 @@ OPCODES = {
     "DOT":         0x54,   # Dot product
     "NORM":        0x55,   # Normalize vector
     "CMP":         0x56,   # Compare register to immediate (sets zero_flag)
+
+    # ── Phase III: Curiosity (AgentSoul + SomTerrain) ─────────────────────────
+    "GOAL_SET":    0x60,   # Set goal vector (target weight-space state)
+    "GOAL_CHECK":  0x61,   # Measure distance to goal; updates stall/curiosity
+    "SOUL_QUERY":  0x62,   # Query content memory for fingerprint match
+    "META_SPAWN":  0x63,   # Spawn N agents with mutated goal vectors
+    "EVOLVE":      0x64,   # Select best child by goal proximity; inherit soul
+    "INTROSPECT":  0x65,   # Export own soul state as readable data
+    "TERRAIN_READ":0x66,   # Read collective terrain memory at (r, c)
+    "TERRAIN_MARK":0x67,   # Write emotional data into terrain at (r, c)
+    "SOUL_INHERIT":0x68,   # Explicit soul inheritance (agent_id → this agent)
+    "GOAL_STALL":  0x69,   # Jump to label if goal is stalled (curiosity trigger)
+
+    # ── Phase IV: CDBG — Context-Discriminated Binary Grammar ────────────────
+    "CDBG_EMIT":   0x70,   # Emit one CDBG frame to the message bus
+    "CDBG_RECV":   0x71,   # Receive and decode a CDBG frame from inbox
+    "CTX_SWITCH":  0x72,   # Set active decode context (CTX nibble)
 }
 
 OPCODE_NAMES = {v: k for k, v in OPCODES.items()}

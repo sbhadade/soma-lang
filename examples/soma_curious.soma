@@ -1,0 +1,131 @@
+; soma_curious.soma — The Curious Agent
+; ========================================
+; A complete SOMA v4 program demonstrating the Phase III curiosity stack.
+; Read the comments — they tell the story.
+;
+; What this program does:
+;   1. Agent spawns on SOM, reads the terrain (Phase III)
+;   2. Sets a goal vector — what it wants to become
+;   3. Trains toward that goal, tagging emotional memory along the way
+;   4. If progress stalls, curiosity fires: META_SPAWN + EVOLVE selects a better path
+;   5. Winner inherits the parent soul — accumulated wisdom crosses the generation gap
+;   6. Dying agent deposits its soul onto the terrain (sacred place emerges)
+;
+; Paper: "A Path to AGI Part III: Curiosity", Swapnil Bhadade, Feb 2026
+
+.SOMA    4.0.0
+.ARCH    ANY
+.SOMSIZE 16x16
+.AGENTS  16
+
+.DATA
+  ; Target state — what "success" looks like in weight-space
+  goal_template : VEC = [0.7, 0.6, 0.5, 0.4, 0.3, 0.8, 0.9, 0.1,
+                          0.7, 0.6, 0.5, 0.4, 0.3, 0.8, 0.9, 0.1]
+  mutation_n    : IMM = 4      ; META_SPAWN spawns 4 candidates
+  eval_steps    : IMM = 50     ; pulses before EVOLVE judgment
+
+.CODE
+@_start:
+  SOM_INIT   RANDOM            ; initialise map weights
+
+  ; ── Spawn the root curious agent ──────────────────────────────────────────
+  SPAWN      A0, @curious_agent
+  SOM_MAP    A0, (8,8)         ; place at centre of 16x16 map
+  MSG_SEND   A0, [goal_template]
+  WAIT       A0
+  HALT
+
+; ─────────────────────────────────────────────────────────────────────────────
+@curious_agent:
+  ; Step 1: Read the terrain before doing anything
+  ; Collective memory tells us about this region before we've lived here.
+  TERRAIN_READ R0             ; R0 = exploration_reward at (8,8)
+  JNZ        R0, @virgin_territory  ; if virgin, go explore first
+  JMP        @set_goal
+
+@virgin_territory:
+  ; We landed in unexplored territory — good place to start
+  ; Deposit a positive initial tag: discovery feels good
+  MOV        R1, 0x7FFF       ; valence ≈ +1.0 (scaled int)
+  TERRAIN_MARK R1             ; tag terrain at current position
+
+@set_goal:
+  ; Step 2: Load goal vector from message
+  MSG_RECV   R0               ; receive goal_template from parent
+  GOAL_SET   R0               ; encode desired future — this agent now has intention
+
+  ; Step 3: Main learning loop — train toward goal
+@learn_loop:
+  SOM_BMU    R0               ; find best matching unit for current weights
+  SOM_TRAIN  R0, S0           ; train map toward current state (lr=S0)
+  LR_DECAY   0x002            ; decay learning rate by 0.2%
+
+  ; Tag memory — this is how the soul learns what matters
+  EMOT_TAG   S0, 0x3FFF       ; mild positive tag at current position
+
+  ; Update terrain with our emotional state
+  TERRAIN_MARK R0
+
+  ; Step 4: Check goal progress — this is the heart of curiosity
+  GOAL_CHECK R1               ; R1 = distance to goal (0=there, 65535=far)
+  JZ         R1, @at_goal     ; zero_flag set if CURIOUS (goal stalled!)
+
+  ; Not stalled — keep going
+  GOAL_STALL @curiosity_mode  ; jump if stall_count > threshold
+  JMP        @learn_loop
+
+@at_goal:
+  ; We reached the goal. Feel good about it.
+  MOV        R2, 0x7FFF
+  EMOT_TAG   R2, 0x7FFF       ; strong positive: success
+  INTROSPECT                  ; let the agent read itself — emit snapshot
+  JMP        @deposit_and_die
+
+; ─────────────────────────────────────────────────────────────────────────────
+@curiosity_mode:
+  ; Goal is stalled. Curiosity fires.
+  ; The system switches from exploitation to exploration.
+  INTROSPECT                  ; read own state first — know thyself
+
+  ; Step 5: META_SPAWN — explore 4 mutated goal vectors simultaneously
+  META_SPAWN [mutation_n], @candidate_agent
+
+  ; Wait for evaluation period, then select the winner
+  BARRIER    [mutation_n]
+
+  ; Step 6: EVOLVE — select child closest to coherent goal state
+  EVOLVE     A1               ; A1 = winner's agent_id
+  SOUL_INHERIT A1             ; winner inherits this agent's emotional memory
+
+  ; The winner continues as the lineage
+  MSG_SEND   A1, [goal_template]
+
+@deposit_and_die:
+  ; Dying agent deposits its soul into the terrain
+  ; This is how sacred places form — accumulated wisdom of the lineage
+  SOUL_QUERY R3               ; query own soul against current position
+  TERRAIN_MARK R3             ; write our emotional depth into the map
+
+  ; Emit CDBG frame — binary identity packet for the bus
+  CDBG_EMIT                   ; 5-byte agent frame: [CTX=AGENT][24-bit ID][CHK]
+
+  AGENT_KILL SELF
+
+; ─────────────────────────────────────────────────────────────────────────────
+@candidate_agent:
+  ; One of 4 META_SPAWN children.
+  ; Each has a mutated goal — different child, different criteria, same EVOLVE pressure.
+  ; EVOLVE will select whichever is most aligned between declared goal and execution.
+
+  MSG_RECV   R0               ; no-op if nothing — candidates run with inherited soul
+  SOM_BMU    R0
+  SOM_TRAIN  R0, S0
+  GOAL_CHECK R1               ; am I closer to MY goal than my siblings?
+  TERRAIN_READ R2             ; what does the collective map say about here?
+  SOUL_QUERY R3               ; does my soul recognise this weight pattern?
+
+  ; Tag with inherited soul wisdom
+  EMOT_TAG   R3, R1
+
+  AGENT_KILL SELF
