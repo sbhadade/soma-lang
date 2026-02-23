@@ -177,9 +177,23 @@ class Parser:
                 continue
             op = self._next()
             if op.type == TT.LBRACKET:
-                inner = self._next()
-                self._expect(TT.RBRACKET)
-                operands.append(("mem", inner.value))
+                # Collect ALL tokens until ] — supports complex expressions
+                # like [patch_locs + R4 * 4] or [R1 + 0]
+                inner_tokens = []
+                while self._pos < len(self.tokens):
+                    t2 = self.tokens[self._pos]
+                    if t2.type == TT.RBRACKET or t2.type in (TT.NEWLINE, TT.EOF):
+                        break
+                    inner_tokens.append(self._next().value)
+                # consume ]
+                if self._pos < len(self.tokens) and self.tokens[self._pos].type == TT.RBRACKET:
+                    self._pos += 1
+                if len(inner_tokens) == 1:
+                    # Simple: [symbol] or [R1]
+                    operands.append(("mem", inner_tokens[0]))
+                else:
+                    # Complex: [base + reg * scale] — pass as raw expr string
+                    operands.append(("mem_expr", " ".join(str(v) for v in inner_tokens)))
             else:
                 operands.append(op.value)
         return Instruction(mnemonic, operands, t.line)
@@ -225,7 +239,26 @@ class Parser:
             return DataDecl(name_tok.value, dtype_str, values or [0.0], name_tok.line)
 
         else:
-            # Scalar: INT/FLOAT/IMM/BYTES — one token
+            # Scalar or array size: INT/FLOAT/IMM/BYTE[expr] — one token or expression
+            # Handle BYTE[256 * 64] style array size declarations
+            nxt = self._peek()
+            if nxt.type == TT.LBRACKET:
+                # Array size expression: consume [expr] and evaluate it
+                self._next()  # consume [
+                expr_tokens = []
+                while True:
+                    t = self._peek()
+                    if t.type == TT.RBRACKET or t.type == TT.EOF:
+                        self._next()  # consume ]
+                        break
+                    expr_tokens.append(self._next().value)
+                # Evaluate simple constant expression (supports +, -, *)
+                try:
+                    size = int(eval(" ".join(str(v) for v in expr_tokens)))
+                except Exception:
+                    size = 0
+                return DataDecl(name_tok.value, dtype_str, float(size), name_tok.line)
+
             val_tok = self._next()
             val = val_tok.value
             if isinstance(val, (int, float)):
@@ -298,6 +331,12 @@ def _encode_instruction(
             if sym_name in data_sym_names:
                 return 0x8000 | (data_sym_names.index(sym_name) & 0x7FFF)
             return _resolve(sym_name)
+        if isinstance(val, tuple) and val[0] == "mem_expr":
+            # Complex address expression [base + R4 * 4] — resolve base symbol only
+            # The Python VM doesn't support full address arithmetic; treat as base ref
+            expr = val[1]
+            first_token = expr.split()[0]
+            return _resolve(first_token)
         return 0
 
     ops = list(operands)

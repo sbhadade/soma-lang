@@ -65,6 +65,13 @@ _TOKEN_SPEC = [
     ("COMMA",     r','),
     ("COLON",     r':'),
     ("EQUALS",    r'='),
+    ("RSHIFT",    r'>>'),
+    ("LSHIFT",    r'<<'),
+    ("AMP",       r'&'),
+    ("PIPE",      r'\|'),
+    ("STAR",      r'\*'),
+    ("PLUS",      r'\+'),
+    ("MINUS",     r'-(?!\d)'),   # bare minus (not part of a number)
     ("NEWLINE",   r'\n'),
     ("SKIP",      r'[ \t\r]+'),
     ("MISMATCH",  r'.'),
@@ -147,6 +154,20 @@ def tokenize(source: str) -> List[Token]:
             tokens.append(Token(TT.COLON, ":", line, col))
         elif kind == "EQUALS":
             tokens.append(Token(TT.IDENT, "=", line, col))
+        elif kind == "RSHIFT":
+            tokens.append(Token(TT.IDENT, ">>", line, col))
+        elif kind == "LSHIFT":
+            tokens.append(Token(TT.IDENT, "<<", line, col))
+        elif kind == "AMP":
+            tokens.append(Token(TT.IDENT, "&", line, col))
+        elif kind == "PIPE":
+            tokens.append(Token(TT.IDENT, "|", line, col))
+        elif kind == "STAR":
+            tokens.append(Token(TT.IDENT, "*", line, col))
+        elif kind == "PLUS":
+            tokens.append(Token(TT.IDENT, "+", line, col))
+        elif kind == "MINUS":
+            tokens.append(Token(TT.IDENT, "-", line, col))
         elif kind == "MISMATCH":
             raise SyntaxError(f"Unexpected character {val!r} at line {line}, col {col}")
 

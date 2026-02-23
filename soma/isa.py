@@ -38,22 +38,40 @@ OPCODES: dict[str, int] = {
     "BROADCAST":      0x23,
     "ACCUM":          0x24,
 
+    # ── Phase III: Curiosity / Terrain (0x25–0x29) ──────────────────────────
+    "TERRAIN_READ":   0x25,   # read terrain reward at agent's SOM position → reg
+    "TERRAIN_MARK":   0x26,   # write valence tag at agent's SOM position
+    "GOAL_SET":       0x27,   # encode desired future state into agent goal register
+    "META_SPAWN":     0x28,   # spawn N mutated child agents at label
+    "EVOLVE":         0x29,   # select fittest child; kill siblings; inherit soul
+
     # ── Phase III: Control flow ─────────────────────────────────────────────
     "JMP":            0x30,
     "JZ":             0x31,
     "JNZ":            0x32,
     "JEQ":            0x33,
     "JGT":            0x34,
+    "JGE":            0x3A,   # jump if greater or equal
+    "JNE":            0x3B,   # jump if not equal
+    "JLT":            0x3C,   # jump if less than
+    "JLE":            0x3D,   # jump if less or equal
     "CALL":           0x35,
     "RET":            0x36,
     "NOP":            0x36,   # alias
     "HALT":           0x37,
+    "TRAP":           0x38,   # software trap / breakpoint (no-op in Python VM)
 
     # ── Phase IV: Arithmetic / vector ───────────────────────────────────────
     "ADD":            0x40,
     "SUB":            0x41,
     "MUL":            0x42,
     "DIV":            0x43,
+    "INC":            0x44,   # increment register by 1
+    "DEC":            0x45,   # decrement register by 1
+    "OR":             0x46,   # bitwise OR
+    "SHL":            0x47,   # shift left
+    "SHR":            0x48,   # shift right (logical)
+    "ZERO":           0x49,   # zero out a register
     "MOV":            0x50,
     "LOAD":           0x51,
     "STORE":          0x52,

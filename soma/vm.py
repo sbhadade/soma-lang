@@ -494,6 +494,50 @@ class SomaVM:
         elif opcode == O.get("ACCUM", -1):
             pass
 
+        # ── Phase III Curiosity / Terrain (no-op stubs in Python VM) ───────────
+        elif opcode == O.get("TERRAIN_READ", 0x25):
+            self._set_reg(agent, reg, 0)          # always returns 0 (unexplored)
+        elif opcode == O.get("TERRAIN_MARK", 0x26):
+            pass                                   # tag terrain — no-op in test VM
+        elif opcode == O.get("GOAL_SET", 0x27):
+            pass                                   # set goal vector — no-op
+        elif opcode == O.get("META_SPAWN", 0x28):
+            pass                                   # spawn mutated children — no-op
+        elif opcode == O.get("EVOLVE", 0x29):
+            pass                                   # select fittest child — no-op
+
+        # ── Extended arithmetic (INC / DEC / OR / SHL / SHR / ZERO) ────────────
+        elif opcode == O.get("INC", 0x44):
+            self._set_reg(agent, reg, self._get_reg(agent, reg) + 1)
+        elif opcode == O.get("DEC", 0x45):
+            self._set_reg(agent, reg, self._get_reg(agent, reg) - 1)
+        elif opcode == O.get("OR", 0x46):
+            self._set_reg(agent, reg, int(self._get_reg(agent, reg)) | int(imm))
+        elif opcode == O.get("SHL", 0x47):
+            self._set_reg(agent, reg, int(self._get_reg(agent, reg)) << int(imm))
+        elif opcode == O.get("SHR", 0x48):
+            self._set_reg(agent, reg, int(self._get_reg(agent, reg)) >> int(imm))
+        elif opcode == O.get("ZERO", 0x49):
+            self._set_reg(agent, reg, 0)
+
+        # ── Extended jumps (JGE / JNE / JLT / JLE) ─────────────────────────────
+        elif opcode == O.get("JGE", 0x3A):
+            if self._get_reg(agent, reg) >= 0:
+                agent.pc = imm
+                return False
+        elif opcode == O.get("JNE", 0x3B):
+            if self._get_reg(agent, reg) != 0:
+                agent.pc = imm
+                return False
+        elif opcode == O.get("JLT", 0x3C):
+            if self._get_reg(agent, reg) < 0:
+                agent.pc = imm
+                return False
+        elif opcode == O.get("JLE", 0x3D):
+            if self._get_reg(agent, reg) <= 0:
+                agent.pc = imm
+                return False
+
         # ── Control flow ───────────────────────────────────────────────────────
         elif opcode == O["JMP"]:
             agent.pc = imm
@@ -557,8 +601,8 @@ class SomaVM:
         elif opcode == O["STORE"]:
             pass  # read-only in test VM
 
-        elif opcode == O["TRAP"]:
-            pass
+        elif opcode == O.get("TRAP", 0x38):
+            pass  # software trap / breakpoint — no-op in Python VM
 
         # ────────────────────────────────────────────────────────────────────────
         # Phase II: Emotional memory (fully inline — no external runtime deps)
