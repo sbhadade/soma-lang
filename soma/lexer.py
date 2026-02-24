@@ -69,6 +69,8 @@ _TOKEN_SPEC = [
     ("LSHIFT",    r'<<'),
     ("AMP",       r'&'),
     ("PIPE",      r'\|'),
+    ("LANGLE",    r'<'),
+    ("RANGLE",    r'>'),
     ("STAR",      r'\*'),
     ("PLUS",      r'\+'),
     ("MINUS",     r'-(?!\d)'),   # bare minus (not part of a number)
@@ -154,6 +156,10 @@ def tokenize(source: str) -> List[Token]:
             tokens.append(Token(TT.COLON, ":", line, col))
         elif kind == "EQUALS":
             tokens.append(Token(TT.IDENT, "=", line, col))
+        elif kind == "LANGLE":
+            tokens.append(Token(TT.LBRACKET, "[", line, col))  # treat < as [
+        elif kind == "RANGLE":
+            tokens.append(Token(TT.RBRACKET, "]", line, col))  # treat > as ]
         elif kind == "RSHIFT":
             tokens.append(Token(TT.IDENT, ">>", line, col))
         elif kind == "LSHIFT":
